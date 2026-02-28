@@ -5899,29 +5899,53 @@ function setupProxy(app) {
   }
   app.set('opencodeProxyConfigured', true);
 
-  // Windows path normalization: OpenCode CLI stores paths with backslashes in the DB,
-  // but the frontend sends forward slashes. Rewrite directory query params on Windows.
-  // Must run BEFORE all other /api middleware.
-  if (process.platform === 'win32') {
-    app.use('/api', (req, _res, next) => {
-      // Parse directory from the raw URL since Express query parsing may not be available
-      const rawUrl = req.originalUrl || req.url || '';
-      const dirMatch = rawUrl.match(/[?&]directory=([^&]*)/);
-      if (dirMatch) {
-        const decoded = decodeURIComponent(dirMatch[1]);
-        if (decoded.includes('/')) {
-          const fixed = decoded.replace(/\//g, '\\');
-          const fixedEncoded = encodeURIComponent(fixed);
-          const newUrl = rawUrl.replace(/([?&]directory=)[^&]*/, '$1' + fixedEncoded);
-          console.log(`[Win32PathFix] Rewrote directory: "${decoded}" → "${fixed}"`);
-          console.log(`[Win32PathFix] URL: "${rawUrl}" → "${newUrl}"`);
-          req.originalUrl = newUrl;
-          req.url = newUrl;
-        }
+  const stripApiPrefix = (rawUrl) => {
+    if (typeof rawUrl !== 'string' || !rawUrl) {
+      return '/';
+    }
+    if (rawUrl === '/api') {
+      return '/';
+    }
+    if (rawUrl.startsWith('/api/')) {
+      return rawUrl.slice(4);
+    }
+    return rawUrl;
+  };
+
+  // Keep route matching stable; only rewrite the proxied upstream path.
+  const rewriteWindowsDirectoryParam = (upstreamPath) => {
+    if (process.platform !== 'win32') {
+      return upstreamPath;
+    }
+    try {
+      const parsed = new URL(upstreamPath, 'http://openchamber.local');
+      const pathname = parsed.pathname || '/';
+      if (pathname === '/session' || pathname.startsWith('/session/')) {
+        return upstreamPath;
       }
-      next();
-    });
-  }
+      const directory = parsed.searchParams.get('directory');
+      if (!directory || !directory.includes('/')) {
+        return upstreamPath;
+      }
+      const fixed = directory.replace(/\//g, '\\');
+      parsed.searchParams.set('directory', fixed);
+      const rewritten = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      if (rewritten !== upstreamPath) {
+        console.log(`[Win32PathFix] Rewrote directory: "${directory}" → "${fixed}"`);
+        console.log(`[Win32PathFix] URL: "${upstreamPath}" → "${rewritten}"`);
+      }
+      return rewritten;
+    } catch {
+      return upstreamPath;
+    }
+  };
+
+  const getUpstreamPathForRequest = (req) => {
+    const rawUrl = (typeof req.originalUrl === 'string' && req.originalUrl)
+      ? req.originalUrl
+      : (typeof req.url === 'string' ? req.url : '/');
+    return rewriteWindowsDirectoryParam(stripApiPrefix(rawUrl));
+  };
 
   app.use('/api', (req, res, next) => {
     if (
@@ -5957,7 +5981,7 @@ function setupProxy(app) {
 
   const forwardSseRequest = async (req, res) => {
     const startedAt = Date.now();
-    const upstreamPath = req.originalUrl.replace(/^\/api/, '');
+    const upstreamPath = getUpstreamPathForRequest(req);
     const targetUrl = buildOpenCodeUrl(upstreamPath, '');
     const authHeaders = getOpenCodeAuthHeaders();
 
@@ -6194,7 +6218,7 @@ function setupProxy(app) {
 
   const forwardGenericApiRequest = async (req, res) => {
     try {
-      const upstreamPath = req.originalUrl.replace(/^\/api/, '');
+      const upstreamPath = getUpstreamPathForRequest(req);
       const targetUrl = buildOpenCodeUrl(upstreamPath, '');
       const headers = collectForwardHeaders(req);
       const method = String(req.method || 'GET').toUpperCase();
@@ -6232,7 +6256,7 @@ function setupProxy(app) {
   // This avoids edge-cases in generic proxy streaming for multi-file attachments.
   app.post('/api/session/:sessionId/message', express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
     try {
-      const upstreamPath = req.originalUrl.replace(/^\/api/, '');
+      const upstreamPath = getUpstreamPathForRequest(req);
       const targetUrl = buildOpenCodeUrl(upstreamPath, '');
       const authHeaders = getOpenCodeAuthHeaders();
 
@@ -6291,7 +6315,8 @@ function setupProxy(app) {
             signal: AbortSignal.timeout(10000),
           };
           const globalRes = await fetch(buildOpenCodeUrl('/session', ''), fetchOpts);
-          const globalSessions = globalRes.ok ? (await globalRes.json()) : [];
+          const globalPayload = globalRes.ok ? await globalRes.json().catch(() => []) : [];
+          const globalSessions = Array.isArray(globalPayload) ? globalPayload : [];
 
           const settingsPath = path.join(os.homedir(), '.config', 'openchamber', 'settings.json');
           let projectDirs = [];
@@ -6299,33 +6324,47 @@ function setupProxy(app) {
             const settingsRaw = fs.readFileSync(settingsPath, 'utf8');
             const settings = JSON.parse(settingsRaw);
             projectDirs = (settings.projects || [])
-              .map(p => p.path)
-              .filter(p => typeof p === 'string' && p.length > 0);
+              .map((project) => (typeof project?.path === 'string' ? project.path.trim() : ''))
+              .filter(Boolean);
           } catch {}
 
-          const seen = new Set(globalSessions.map(s => s.id));
+          const seen = new Set(
+            globalSessions
+              .map((session) => (session && typeof session.id === 'string' ? session.id : null))
+              .filter((id) => typeof id === 'string')
+          );
           const extraSessions = [];
           for (const dir of projectDirs) {
-            const backslashDir = dir.replace(/\//g, '\\');
-            const encoded = encodeURIComponent(backslashDir);
-            try {
-              const dirRes = await fetch(buildOpenCodeUrl(`/session?directory=${encoded}`, ''), fetchOpts);
-              if (dirRes.ok) {
-                const dirSessions = await dirRes.json();
-                if (Array.isArray(dirSessions)) {
-                  for (const s of dirSessions) {
-                    if (s && s.id && !seen.has(s.id)) {
-                      seen.add(s.id);
-                      extraSessions.push(s);
+            const candidates = Array.from(new Set([
+              dir,
+              dir.replace(/\\/g, '/'),
+              dir.replace(/\//g, '\\'),
+            ]));
+            for (const candidateDir of candidates) {
+              const encoded = encodeURIComponent(candidateDir);
+              try {
+                const dirRes = await fetch(buildOpenCodeUrl(`/session?directory=${encoded}`, ''), fetchOpts);
+                if (dirRes.ok) {
+                  const dirPayload = await dirRes.json().catch(() => []);
+                  const dirSessions = Array.isArray(dirPayload) ? dirPayload : [];
+                  for (const session of dirSessions) {
+                    const id = session && typeof session.id === 'string' ? session.id : null;
+                    if (id && !seen.has(id)) {
+                      seen.add(id);
+                      extraSessions.push(session);
                     }
                   }
                 }
-              }
-            } catch {}
+              } catch {}
+            }
           }
 
           const merged = [...globalSessions, ...extraSessions];
-          merged.sort((a, b) => (b.time_updated || 0) - (a.time_updated || 0));
+          merged.sort((a, b) => {
+            const aTime = a && typeof a.time_updated === 'number' ? a.time_updated : 0;
+            const bTime = b && typeof b.time_updated === 'number' ? b.time_updated : 0;
+            return bTime - aTime;
+          });
           console.log(`[SessionMerge] ${globalSessions.length} global + ${extraSessions.length} extra = ${merged.length} total`);
           return res.json(merged);
         } catch (error) {
