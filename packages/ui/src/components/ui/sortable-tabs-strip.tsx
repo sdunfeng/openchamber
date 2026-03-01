@@ -43,7 +43,7 @@ const restrictToXAxis: Modifier = ({ transform }) => ({
   y: 0,
 });
 
-const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode }> = ({ id, children }) => {
+const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode; className?: string }> = ({ id, children, className }) => {
   const {
     attributes,
     listeners,
@@ -61,7 +61,7 @@ const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode }> = 
         transform: DndCSS.Transform.toString(transform),
         transition,
       }}
-      className={cn('h-full rounded-md', isDragging && 'opacity-50')}
+      className={cn('h-full rounded-md', className, isDragging && 'opacity-50')}
       {...attributes}
       {...listeners}
     >
@@ -70,8 +70,8 @@ const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode }> = 
   );
 };
 
-const StaticTabWrapper: React.FC<{ id: string; children: React.ReactNode }> = ({ id, children }) => (
-  <div className="h-full" data-sortable-tab-id={id}>{children}</div>
+const StaticTabWrapper: React.FC<{ id: string; children: React.ReactNode; className?: string }> = ({ id, children, className }) => (
+  <div className={cn('h-full', className)} data-sortable-tab-id={id}>{children}</div>
 );
 
 export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
@@ -198,15 +198,16 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
         {items.map((item) => {
           const isActive = item.id === activeId;
           const closable = item.closable !== false && Boolean(onClose);
+          const wrapperClassName = isScrollable ? undefined : 'min-w-0 flex-1 basis-0';
           return (
-            <Wrapper key={item.id} id={item.id}>
+            <Wrapper key={item.id} id={item.id} className={wrapperClassName}>
               <div
                 className={cn(
                   'group flex h-full items-center border-r border-border/40',
-                  isScrollable ? 'shrink-0' : 'min-w-0 flex-1 basis-0',
+                  isScrollable ? 'shrink-0' : 'w-full min-w-0',
                   isActive
-                    ? 'bg-[var(--surface-muted)] text-foreground'
-                    : 'text-muted-foreground hover:bg-interactive-hover/40 hover:text-foreground'
+                    ? 'bg-interactive-selection/55 text-interactive-selection-foreground'
+                    : 'bg-interactive-selection/12 text-muted-foreground hover:bg-interactive-selection/28 hover:text-foreground'
                 )}
               >
                 <button
@@ -215,13 +216,13 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                   aria-selected={isActive}
                   onClick={() => onSelect(item.id)}
                   className={cn(
-                    'h-full min-w-0 text-left typography-micro',
-                    isScrollable ? 'max-w-56 truncate pl-3 pr-2' : 'w-full truncate px-2.5'
+                    'flex h-full min-w-0 items-center typography-micro',
+                    isScrollable ? 'max-w-56 justify-start truncate pl-3 pr-2 text-left' : 'w-full justify-center truncate px-2.5 text-center'
                   )}
                   title={item.title ?? item.label}
                 >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {item.icon ? <span className="shrink-0">{item.icon}</span> : null}
+                  <span className={cn('flex min-w-0 items-center gap-1.5 leading-none', !isScrollable && 'justify-center')}>
+                    {item.icon ? <span className="flex shrink-0 items-center justify-center leading-none">{item.icon}</span> : null}
                     <span className="truncate">{item.label}</span>
                   </span>
                 </button>
@@ -233,7 +234,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                       onClose?.(item.id);
                     }}
                     className={cn(
-                      'mr-1 inline-flex h-5 w-5 items-center justify-center rounded-sm transition-opacity',
+                      'mr-1 inline-flex aspect-square h-[65%] min-h-4 max-h-5 items-center justify-center rounded-sm transition-opacity',
                       isActive
                         ? 'text-muted-foreground hover:bg-interactive-hover/60 hover:text-foreground'
                         : 'text-muted-foreground opacity-0 hover:bg-interactive-hover/80 hover:text-foreground group-hover:opacity-100'
