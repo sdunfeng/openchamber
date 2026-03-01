@@ -1768,13 +1768,14 @@ export const GitView: React.FC<GitViewProps> = ({ mode = 'full' }) => {
       <div className="flex-1 min-h-0 overflow-hidden">
         <div className="h-full min-h-0 flex flex-col">
           <div className={cn('min-w-0 min-h-0 h-full flex flex-col', isSidebarMode ? 'bg-transparent' : 'bg-muted/10')}>
-            <div className="h-8">
+            <div className={cn(isMobile ? 'h-10 px-1.5' : 'h-8 px-2')}>
               <SortableTabsStrip
                 items={actionTabItems}
                 activeId={actionTab}
                 onSelect={(tabID) => setActionTab(tabID as ActionTab)}
                 layoutMode="fit"
                 variant="active-pill"
+                inactiveTabsIconOnly={isSidebarMode && isMobile}
                 className="h-full"
               />
             </div>
@@ -1892,7 +1893,7 @@ export const GitView: React.FC<GitViewProps> = ({ mode = 'full' }) => {
                       }}
                     />
                   ) : (
-                    <div className="space-y-1">
+                    <div className="space-y-1 pt-3">
                       <div className="typography-ui-header font-semibold text-foreground">Re-integrate commits</div>
                       <div className="typography-micro text-muted-foreground">
                         Available in worktree mode.

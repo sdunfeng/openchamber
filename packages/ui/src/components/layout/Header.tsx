@@ -1635,7 +1635,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="flex h-full flex-col bg-[var(--surface-elevated)]">
                   <div className="sticky top-0 z-20 border-b border-[var(--interactive-border)] bg-[var(--surface-elevated)] px-2 py-px">
                     <div className="flex items-center justify-between gap-2 px-3 py-0">
-                      <div className="h-9 min-w-0 flex-1">
+                      <div className="h-10 min-w-0 flex-1">
                         <SortableTabsStrip
                           items={mobileServicesTabItems}
                           activeId={mobileServicesTab}
