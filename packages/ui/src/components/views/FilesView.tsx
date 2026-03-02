@@ -23,7 +23,7 @@ import {
   RiDeleteBinLine,
   RiEditLine,
   RiFileCopyLine,
-  RiFileTransferFill,
+  RiFileTransferLine,
 } from '@remixicon/react';
 import { toast } from '@/components/ui';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -2264,7 +2264,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
               title="Open in selected app"
               aria-label="Open in selected app"
             >
-              <RiFileTransferFill className="h-4 w-4" />
+              <RiFileTransferLine className="h-4 w-4" />
             </Button>
 
             {canEdit && !isSelectedImage && (
@@ -2701,7 +2701,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
             title="Open in selected app"
             aria-label="Open in selected app"
           >
-            <RiFileTransferFill className="h-4 w-4" />
+            <RiFileTransferLine className="h-4 w-4" />
           </Button>
 
           {canEdit && !isSelectedImage && (
