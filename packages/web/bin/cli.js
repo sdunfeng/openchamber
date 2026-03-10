@@ -258,6 +258,84 @@ function parseTtlMsOrThrow(rawValue, {
   return parsed;
 }
 
+function formatDurationForCli(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return null;
+  }
+  const value = Math.round(ms);
+  if (value % (24 * 60 * 60 * 1000) === 0) return `${value / (24 * 60 * 60 * 1000)}d`;
+  if (value % (60 * 60 * 1000) === 0) return `${value / (60 * 60 * 1000)}h`;
+  if (value % (60 * 1000) === 0) return `${value / (60 * 1000)}m`;
+  if (value % 1000 === 0) return `${value / 1000}s`;
+  return `${value}ms`;
+}
+
+function shellQuote(value) {
+  const text = String(value);
+  if (/^[A-Za-z0-9._\-/:=]+$/.test(text)) {
+    return text;
+  }
+  return `'${text.replace(/'/g, `'"'"'`)}'`;
+}
+
+function buildTunnelStartReplayCommand({
+  port,
+  provider,
+  mode,
+  profileName,
+  configPath,
+  hostname,
+  connectTtlMs,
+  sessionTtlMs,
+  qr,
+  noQr,
+  includeTokenPlaceholder,
+  tokenViaStdin,
+  tokenFileProvided,
+}) {
+  const parts = ['openchamber', 'tunnel', 'start'];
+  if (Number.isFinite(port) && port > 0) {
+    parts.push('--port', String(port));
+  }
+  if (profileName) {
+    parts.push('--profile', shellQuote(profileName));
+  }
+  if (provider) {
+    parts.push('--provider', shellQuote(provider));
+  }
+  if (mode) {
+    parts.push('--mode', shellQuote(mode));
+  }
+  if (typeof configPath === 'string' && configPath.trim().length > 0) {
+    parts.push('--config', shellQuote(configPath));
+  }
+  if (typeof hostname === 'string' && hostname.trim().length > 0) {
+    parts.push('--hostname', shellQuote(hostname));
+  }
+  const connectTtl = formatDurationForCli(connectTtlMs);
+  if (connectTtl) {
+    parts.push('--connect-ttl', connectTtl);
+  }
+  const sessionTtl = formatDurationForCli(sessionTtlMs);
+  if (sessionTtl) {
+    parts.push('--session-ttl', sessionTtl);
+  }
+  if (qr) parts.push('--qr');
+  if (noQr) parts.push('--no-qr');
+
+  if (includeTokenPlaceholder) {
+    if (tokenViaStdin) {
+      parts.push('--token-stdin');
+    } else if (tokenFileProvided) {
+      parts.push('--token-file', '<redacted>');
+    } else {
+      parts.push('--token', '<redacted>');
+    }
+  }
+
+  return parts.join(' ');
+}
+
 async function resolveTunnelTtlOverrides(options) {
   let connectTtlRaw = typeof options.connectTtl === 'string' ? options.connectTtl : undefined;
   let sessionTtlRaw = typeof options.sessionTtl === 'string' ? options.sessionTtl : undefined;
@@ -1903,6 +1981,7 @@ async function resolveTargetInstance({
         uiPassword: options.uiPassword,
         suppressUnsafePortWarning: true,
         suppressUiPasswordWarning: true,
+        suppressStartupSummary: true,
       });
       running = await discoverRunningInstances();
       const started = running.find((entry) => entry.port === options.port);
@@ -1939,6 +2018,7 @@ async function resolveTargetInstance({
         explicitPort: false,
         suppressUnsafePortWarning: true,
         suppressUiPasswordWarning: true,
+        suppressStartupSummary: true,
       });
       running = await discoverRunningInstances();
       const started = running.find((entry) => entry.port === startedPort) || getLatestInstance(running);
@@ -2372,10 +2452,12 @@ const commands = {
       uiPassword: effectiveUiPassword,
     });
 
-    console.log(`OpenChamber started in daemon mode on port ${resolvedPort}`);
-    console.log(`PID: ${child.pid}`);
-    console.log(`Visit: http://localhost:${resolvedPort}`);
-    console.log(`Logs: run \`openchamber logs -p ${resolvedPort}\``);
+    if (!options.suppressStartupSummary) {
+      console.log(`OpenChamber started in daemon mode on port ${resolvedPort}`);
+      console.log(`PID: ${child.pid}`);
+      console.log(`Visit: http://localhost:${resolvedPort}`);
+      console.log(`Logs: run \`openchamber logs -p ${resolvedPort}\``);
+    }
 
     return resolvedPort;
   },
@@ -2981,7 +3063,11 @@ const commands = {
 
         const instance = await resolveTargetInstance({ options, allowAutoStart: true, rejectDesktopRuntime: true });
         if (instance?.autoStarted && !options.json && !options.quiet) {
-          logStatus('info', `Using instance port ${instance.port} (auto-started)`);
+          logStatus(
+            'info',
+            `Using auto-started instance on port ${instance.port}`,
+            `logs: openchamber logs -p ${instance.port}`,
+          );
         }
 
         if (instance?.autoStarted) {
@@ -3096,18 +3182,38 @@ const commands = {
           throw new Error(`${userError} Run \`openchamber logs -p ${instance.port}\` for details.`);
         }
 
-        spin?.stop('Tunnel started');
+        // Avoid duplicate "Tunnel started" lines: spinner completion is implied by
+        // the subsequent structured success section.
+        spin?.clear();
+
+        const replayCommand = buildTunnelStartReplayCommand({
+          port: instance.port,
+          provider,
+          mode,
+          profileName: selectedProfile?.name,
+          configPath: options.configPath,
+          hostname,
+          connectTtlMs,
+          sessionTtlMs,
+          qr: options.qr === true,
+          noQr: options.noQr === true,
+          includeTokenPlaceholder: !selectedProfile && mode === 'managed-remote' && typeof token === 'string' && token.trim().length > 0,
+          tokenViaStdin: options.tokenStdin === true,
+          tokenFileProvided: typeof options.tokenFile === 'string' && options.tokenFile.trim().length > 0,
+        });
 
         if (options.json) {
-          console.log(JSON.stringify({ port: instance.port, ...body }, null, 2));
+          console.log(JSON.stringify({ port: instance.port, replayCommand, ...body }, null, 2));
         } else {
           clackIntro('Tunnel Started');
-          logStatus('success', `port ${instance.port} ${clackFormatProviderWithIcon(body.provider)}/${body.mode}`, body.url || 'n/a');
+          logStatus('success', `port ${instance.port} ${clackFormatProviderWithIcon(body.provider)}/${body.mode}`);
+          logStatus('success', body.url || 'n/a');
           if (body.connectUrl) {
-            logStatus('info', 'connect link', body.connectUrl);
+            logStatus('success', body.connectUrl);
           }
-          clackOutro('start complete');
-          clackNote('check status with `openchamber tunnel status`\nstop with `openchamber tunnel stop`', 'Hint');
+          logStatus('info', `save: ${replayCommand}`);
+          logStatus('info', 'status: openchamber tunnel status | stop: openchamber tunnel stop');
+          clackOutro('tunnel ready');
         }
 
         setCancelCleanup(null);
