@@ -525,6 +525,7 @@ export interface SettingsPayload {
   queueModeEnabled?: boolean;
   gitmojiEnabled?: boolean;
   toolCallExpansion?: 'collapsed' | 'activity' | 'detailed' | 'changes';
+  inputSpellcheckEnabled?: boolean;
   fontSize?: number;
   terminalFontSize?: number;
   padding?: number;
@@ -773,6 +774,8 @@ export type GitHubPullRequestStatus = {
   pr?: GitHubPullRequest | null;
   checks?: GitHubChecksSummary | null;
   canMerge?: boolean;
+  defaultBranch?: string | null;
+  resolvedRemoteName?: string | null;
 };
 
 export type GitHubPullRequestCreateInput = {
