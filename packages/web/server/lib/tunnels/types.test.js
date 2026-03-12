@@ -27,9 +27,9 @@ describe('tunnel request types', () => {
     expect(request.hostname).toBe('');
   });
 
-  it('preserves unknown mode in start request for explicit validation', () => {
+  it('normalizes unknown mode to default quick mode', () => {
     const request = normalizeTunnelStartRequest({ mode: 'future-mode' });
-    expect(request.mode).toBe('future-mode');
+    expect(request.mode).toBe('quick');
   });
 
   it('requires token and hostname for managed-remote', () => {

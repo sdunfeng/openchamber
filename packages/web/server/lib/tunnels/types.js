@@ -32,12 +32,19 @@ export class TunnelServiceError extends Error {
   }
 }
 
+const SUPPORTED_TUNNEL_PROVIDERS = new Set([
+  TUNNEL_PROVIDER_CLOUDFLARE,
+]);
+
 export function normalizeTunnelProvider(value) {
   if (typeof value !== 'string') {
     return TUNNEL_PROVIDER_CLOUDFLARE;
   }
   const provider = value.trim().toLowerCase();
-  return provider || TUNNEL_PROVIDER_CLOUDFLARE;
+  if (!provider || !SUPPORTED_TUNNEL_PROVIDERS.has(provider)) {
+    return TUNNEL_PROVIDER_CLOUDFLARE;
+  }
+  return provider;
 }
 
 export function normalizeTunnelMode(value) {
@@ -65,7 +72,7 @@ export function normalizeTunnelIntent(value) {
     return undefined;
   }
   const intent = value.trim().toLowerCase();
-  if (!intent) {
+  if (!intent || !SUPPORTED_TUNNEL_INTENTS.has(intent)) {
     return undefined;
   }
   return intent;
@@ -84,10 +91,7 @@ function modeIntentFallback(mode) {
 function normalizeTunnelModeForRequest(value) {
   if (typeof value === 'string') {
     const mode = value.trim().toLowerCase();
-    if (mode.length > 0) {
-      if (mode === TUNNEL_MODE_QUICK || mode === TUNNEL_MODE_MANAGED_REMOTE || mode === TUNNEL_MODE_MANAGED_LOCAL) {
-        return mode;
-      }
+    if (mode === TUNNEL_MODE_QUICK || mode === TUNNEL_MODE_MANAGED_REMOTE || mode === TUNNEL_MODE_MANAGED_LOCAL) {
       return mode;
     }
   }
@@ -105,13 +109,22 @@ export function normalizeOptionalPath(value) {
   if (!trimmed) {
     return null;
   }
+  let resolved;
   if (trimmed === '~') {
-    return os.homedir();
+    resolved = os.homedir();
+  } else if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    resolved = path.join(os.homedir(), trimmed.slice(2));
+  } else {
+    resolved = path.resolve(trimmed);
   }
-  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
-    return path.join(os.homedir(), trimmed.slice(2));
+  const home = os.homedir();
+  if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+    throw new TunnelServiceError(
+      'validation_error',
+      `Config path must be within the home directory (${home}). Got: ${resolved}`
+    );
   }
-  return path.resolve(trimmed);
+  return resolved;
 }
 
 export function isSupportedTunnelMode(mode) {

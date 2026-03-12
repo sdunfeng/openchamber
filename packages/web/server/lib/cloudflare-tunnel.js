@@ -94,7 +94,7 @@ Or visit: https://developers.cloudflare.com/cloudflare-one/networks/connectors/c
 `);
 }
 
-const spawnCloudflared = (args, envOverrides = {}) => spawn('cloudflared', args, {
+const spawnCloudflared = (args, envOverrides = {}, resolvedBinaryPath = 'cloudflared') => spawn(resolvedBinaryPath, args, {
   stdio: ['ignore', 'pipe', 'pipe'],
   env: {
     ...process.env,
@@ -390,7 +390,7 @@ export async function startCloudflareQuickTunnel({ originUrl }) {
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-cf-'));
 
-  const child = spawnCloudflared(['tunnel', '--url', originUrl], { HOME: tempDir });
+  const child = spawnCloudflared(['tunnel', '--url', originUrl], { HOME: tempDir }, cfCheck.path);
 
   let publicUrl = null;
   let tunnelReady = false;
@@ -430,6 +430,8 @@ export async function startCloudflareQuickTunnel({ originUrl }) {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       if (!publicUrl) {
+        try { child.kill('SIGINT'); } catch { /* ignore */ }
+        cleanupTempDir();
         reject(new Error('Tunnel URL not received within 30 seconds'));
       }
     }, DEFAULT_STARTUP_TIMEOUT_MS);
@@ -494,7 +496,7 @@ export async function startCloudflareManagedRemoteTunnel({ token, hostname, toke
     tempTokenFile = { dir: tempDir, path: effectiveTokenFilePath };
   }
 
-  const child = spawnCloudflared(['tunnel', 'run', '--token-file', effectiveTokenFilePath]);
+  const child = spawnCloudflared(['tunnel', 'run', '--token-file', effectiveTokenFilePath], {}, cfCheck.path);
   const publicUrl = `https://${normalizedHost}`;
 
   child.stdout.on('data', () => {
@@ -527,7 +529,13 @@ export async function startCloudflareManagedRemoteTunnel({ token, hostname, toke
     cleanupTempTokenFile();
   });
 
-  await waitForManagedTunnelReady(child, { modeLabel: 'managed-remote tunnel' });
+  try {
+    await waitForManagedTunnelReady(child, { modeLabel: 'managed-remote tunnel' });
+  } catch (error) {
+    try { child.kill('SIGINT'); } catch { /* ignore */ }
+    cleanupTempTokenFile();
+    throw error;
+  }
 
   return {
     mode: TUNNEL_MODE_MANAGED_REMOTE,
@@ -578,7 +586,7 @@ export async function startCloudflareManagedLocalTunnel({ configPath, hostname }
   }
   args.push('run');
 
-  const child = spawnCloudflared(args);
+  const child = spawnCloudflared(args, {}, cfCheck.path);
   const publicUrl = `https://${resolvedHost}`;
 
   child.stdout.on('data', () => {
@@ -594,7 +602,12 @@ export async function startCloudflareManagedLocalTunnel({ configPath, hostname }
     console.error(`Cloudflared error: ${error.message}`);
   });
 
-  await waitForManagedTunnelReady(child, { modeLabel: 'managed-local tunnel' });
+  try {
+    await waitForManagedTunnelReady(child, { modeLabel: 'managed-local tunnel' });
+  } catch (error) {
+    try { child.kill('SIGINT'); } catch { /* ignore */ }
+    throw error;
+  }
 
   return {
     mode: TUNNEL_MODE_MANAGED_LOCAL,

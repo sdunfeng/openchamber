@@ -623,7 +623,7 @@ function parseArgs(argv = process.argv.slice(2)) {
         const { value, nextIndex } = consumeValue(i, inlineValue);
         i = nextIndex;
         const parsed = parseInt(value ?? '', 10);
-        options.port = Number.isFinite(parsed) ? parsed : DEFAULT_PORT;
+        options.port = (Number.isFinite(parsed) && parsed >= 1 && parsed <= 65535) ? parsed : DEFAULT_PORT;
         options.explicitPort = true;
         break;
       }
@@ -1636,14 +1636,18 @@ async function resolveAvailablePort(desiredPort, explicitPort = false, onNotice)
   return 0;
 }
 
+function getRunDir() {
+  const dir = path.join(getDataDir(), 'run');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
 async function getPidFilePath(port) {
-  const tmpDir = os.tmpdir();
-  return path.join(tmpDir, `openchamber-${port}.pid`);
+  return path.join(getRunDir(), `openchamber-${port}.pid`);
 }
 
 async function getInstanceFilePath(port) {
-  const tmpDir = os.tmpdir();
-  return path.join(tmpDir, `openchamber-${port}.json`);
+  return path.join(getRunDir(), `openchamber-${port}.json`);
 }
 
 function readPidFile(pidFilePath) {
@@ -1658,7 +1662,7 @@ function readPidFile(pidFilePath) {
 
 function writePidFile(pidFilePath, pid, onNotice) {
   try {
-    fs.writeFileSync(pidFilePath, String(pid));
+    fs.writeFileSync(pidFilePath, String(pid), { mode: 0o600 });
   } catch (error) {
     const message = `Could not write PID file: ${error.message}`;
     if (typeof onNotice === 'function') {
@@ -1694,7 +1698,7 @@ function writeInstanceOptions(instanceFilePath, options, onNotice) {
       hasUiPassword: typeof options.uiPassword === 'string',
       startedAt: Number.isFinite(options.startedAt) ? options.startedAt : Date.now(),
     };
-    fs.writeFileSync(instanceFilePath, JSON.stringify(toStore, null, 2));
+    fs.writeFileSync(instanceFilePath, JSON.stringify(toStore, null, 2), { mode: 0o600 });
   } catch (error) {
     const message = `Could not write instance file: ${error.message}`;
     if (typeof onNotice === 'function') {
@@ -1915,21 +1919,21 @@ async function resolveDoctorPortStatuses(options = {}) {
 
 async function discoverRunningInstances() {
   const instances = [];
-  const tmpDir = os.tmpdir();
+  const runDir = getRunDir();
   try {
-    const files = fs.readdirSync(tmpDir);
+    const files = fs.readdirSync(runDir);
     const pidFiles = files.filter((file) => file.startsWith('openchamber-') && file.endsWith('.pid'));
     for (const file of pidFiles) {
       const port = parseInt(file.replace('openchamber-', '').replace('.pid', ''), 10);
       if (!Number.isFinite(port) || port <= 0) continue;
-      const pidFilePath = path.join(tmpDir, file);
+      const pidFilePath = path.join(runDir, file);
       const pid = readPidFile(pidFilePath);
       if (!pid || !isProcessRunning(pid)) {
         removePidFile(pidFilePath);
-        removeInstanceFile(path.join(tmpDir, `openchamber-${port}.json`));
+        removeInstanceFile(path.join(runDir, `openchamber-${port}.json`));
         continue;
       }
-      const instanceFilePath = path.join(tmpDir, `openchamber-${port}.json`);
+      const instanceFilePath = path.join(runDir, `openchamber-${port}.json`);
       let mtime = 0;
       let startedAt = 0;
       try {
@@ -2695,9 +2699,6 @@ const commands = {
       }
     }
     const serverArgs = [serverPath, '--port', String(targetPort)];
-    if (effectiveUiPassword) {
-      serverArgs.push('--ui-password', effectiveUiPassword);
-    }
 
     const serveSpin = showOutput ? createSpinner(options) : null;
 
@@ -3365,21 +3366,27 @@ const commands = {
           if (doctorHostnameOverride.length > 0) {
             query.set('managedRemoteTunnelHostname', doctorHostnameOverride);
           }
-          if (typeof doctorTokenValue === 'string' && doctorTokenValue.trim().length > 0) {
-            query.set('managedRemoteTunnelToken', doctorTokenValue);
-          }
           if (hasSavedManagedRemoteProfile) {
             query.set('hasSavedManagedRemoteProfile', '1');
+          }
+          const doctorBody = {};
+          if (typeof doctorTokenValue === 'string' && doctorTokenValue.trim().length > 0) {
+            doctorBody.managedRemoteTunnelToken = doctorTokenValue;
           }
 
           const failedPorts = [];
           for (const diagnosticsEntry of diagnosticsEntries) {
             try {
               doctorSpin?.message(`Diagnosing provider on port ${diagnosticsEntry.port}...`);
+              const doctorFetchOptions = { timeoutMs: 10000 };
+              if (Object.keys(doctorBody).length > 0) {
+                doctorFetchOptions.method = 'POST';
+                doctorFetchOptions.body = JSON.stringify(doctorBody);
+              }
               const { response, body } = await requestJson(
                 diagnosticsEntry.port,
                 `/api/openchamber/tunnel/doctor?${query.toString()}`,
-                { timeoutMs: 10000 },
+                doctorFetchOptions,
               );
               if (response.ok && body?.ok && isValidTunnelDoctorResponse(body)) {
                 doctorResult = body;

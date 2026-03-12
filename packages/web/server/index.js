@@ -22,6 +22,7 @@ import {
   TUNNEL_MODE_QUICK,
   TUNNEL_PROVIDER_CLOUDFLARE,
   TunnelServiceError,
+  isSupportedTunnelMode,
   normalizeOptionalPath,
   normalizeTunnelStartRequest,
   normalizeTunnelMode,
@@ -1479,7 +1480,7 @@ const readManagedRemoteTunnelConfigFromDisk = async () => {
 
 const writeManagedRemoteTunnelConfigToDisk = async (data) => {
   await fsPromises.mkdir(path.dirname(CLOUDFLARE_MANAGED_REMOTE_TUNNELS_FILE_PATH), { recursive: true });
-  await fsPromises.writeFile(CLOUDFLARE_MANAGED_REMOTE_TUNNELS_FILE_PATH, JSON.stringify(data, null, 2), 'utf8');
+  await fsPromises.writeFile(CLOUDFLARE_MANAGED_REMOTE_TUNNELS_FILE_PATH, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
 };
 
 const updateManagedRemoteTunnelConfig = async (mutate) => {
@@ -3476,6 +3477,7 @@ let activeTunnelController = null;
 const tunnelProviderRegistry = createTunnelProviderRegistry([
   createCloudflareTunnelProvider(),
 ]);
+tunnelProviderRegistry.seal();
 const tunnelAuthController = createTunnelAuth();
 let runtimeManagedRemoteTunnelToken = '';
 let runtimeManagedRemoteTunnelHostname = '';
@@ -7996,35 +7998,40 @@ async function main(options = {}) {
     }
   });
 
-  app.get('/api/openchamber/tunnel/doctor', async (req, res) => {
+  // Accept both POST (preferred, tokens in body) and GET (backward compat, no tokens in URL).
+  const handleTunnelDoctor = async (req, res) => {
     try {
-      const providerId = typeof req?.query?.provider === 'string' && req.query.provider.trim().length > 0
-        ? normalizeTunnelProvider(req.query.provider)
+      const params = req.query || {};
+      // Sensitive fields (tokens) are read from the request body only, never from query params.
+      const body = req.body || {};
+
+      const providerId = typeof params.provider === 'string' && params.provider.trim().length > 0
+        ? normalizeTunnelProvider(params.provider)
         : await resolvePreferredTunnelProvider();
-      const modeFilter = typeof req?.query?.mode === 'string' && req.query.mode.trim().length > 0
-        ? req.query.mode.trim().toLowerCase()
+      const modeFilter = typeof params.mode === 'string' && params.mode.trim().length > 0
+        ? params.mode.trim().toLowerCase()
         : null;
 
       const settings = await readSettingsFromDiskMigrated();
-      const selectedPresetId = typeof req?.query?.managedRemoteTunnelPresetId === 'string'
-        ? req.query.managedRemoteTunnelPresetId.trim()
+      const selectedPresetId = typeof params.managedRemoteTunnelPresetId === 'string'
+        ? params.managedRemoteTunnelPresetId.trim()
         : '';
-      const requestConfigPath = normalizeOptionalPath(req?.query?.configPath)
+      const requestConfigPath = normalizeOptionalPath(params.configPath)
         ?? normalizeOptionalPath(settings?.managedLocalTunnelConfigPath);
-      const requestManagedRemoteHostname = normalizeManagedRemoteTunnelHostname(req?.query?.managedRemoteTunnelHostname);
-      const requestTunnelHostname = normalizeManagedRemoteTunnelHostname(req?.query?.tunnelHostname);
-      const requestHostname = normalizeManagedRemoteTunnelHostname(req?.query?.hostname);
+      const requestManagedRemoteHostname = normalizeManagedRemoteTunnelHostname(params.managedRemoteTunnelHostname);
+      const requestTunnelHostname = normalizeManagedRemoteTunnelHostname(params.tunnelHostname);
+      const requestHostname = normalizeManagedRemoteTunnelHostname(params.hostname);
       const hostnameFromSettings = normalizeManagedRemoteTunnelHostname(settings?.managedRemoteTunnelHostname);
       const hostname = requestHostname || requestTunnelHostname || requestManagedRemoteHostname || hostnameFromSettings;
 
-      const requestManagedRemoteToken = typeof req?.query?.managedRemoteTunnelToken === 'string'
-        ? req.query.managedRemoteTunnelToken.trim()
+      const requestManagedRemoteToken = typeof body.managedRemoteTunnelToken === 'string'
+        ? body.managedRemoteTunnelToken.trim()
         : '';
-      const requestTunnelToken = typeof req?.query?.tunnelToken === 'string'
-        ? req.query.tunnelToken.trim()
+      const requestTunnelToken = typeof body.tunnelToken === 'string'
+        ? body.tunnelToken.trim()
         : '';
-      const requestToken = typeof req?.query?.token === 'string'
-        ? req.query.token.trim()
+      const requestToken = typeof body.token === 'string'
+        ? body.token.trim()
         : '';
       const storedManagedRemoteToken = typeof settings?.managedRemoteTunnelToken === 'string'
         ? settings.managedRemoteTunnelToken.trim()
@@ -8035,7 +8042,7 @@ async function main(options = {}) {
         const savedToken = typeof entry?.token === 'string' ? entry.token.trim() : '';
         return Boolean(savedHostname && savedToken);
       });
-      const cliHasSavedManagedRemoteProfile = req?.query?.hasSavedManagedRemoteProfile === '1';
+      const cliHasSavedManagedRemoteProfile = params.hasSavedManagedRemoteProfile === '1';
       const hasSavedManagedRemoteProfile = serverHasSavedManagedRemoteProfile || cliHasSavedManagedRemoteProfile;
       const configManagedRemoteToken = providerId === TUNNEL_PROVIDER_CLOUDFLARE
         ? await resolveManagedRemoteTunnelToken({ presetId: selectedPresetId, hostname })
@@ -8068,7 +8075,9 @@ async function main(options = {}) {
       console.warn('Tunnel doctor failed:', error);
       return res.status(500).json({ ok: false, error: 'Failed to run tunnel doctor' });
     }
-  });
+  };
+  app.post('/api/openchamber/tunnel/doctor', handleTunnelDoctor);
+  app.get('/api/openchamber/tunnel/doctor', handleTunnelDoctor);
 
   app.get('/api/openchamber/tunnel/providers', (_req, res) => {
     const providers = tunnelProviderRegistry.listCapabilities();
@@ -8197,12 +8206,22 @@ async function main(options = {}) {
   app.post('/api/openchamber/tunnel/start', async (_req, res) => {
     try {
       const settings = await readSettingsFromDiskMigrated();
+      // Reject explicitly supplied unknown providers/modes early, before normalization converts them to defaults.
+      if (typeof _req?.body?.provider === 'string' && _req.body.provider.trim().length > 0) {
+        const rawProvider = _req.body.provider.trim().toLowerCase();
+        if (!tunnelProviderRegistry.get(rawProvider)) {
+          return res.status(422).json({ ok: false, error: `Unsupported tunnel provider: ${rawProvider}`, code: 'provider_unsupported' });
+        }
+      }
       const provider = normalizeTunnelProvider(_req?.body?.provider ?? settings?.tunnelProvider);
       const modeInput = _req?.body?.mode ?? settings?.tunnelMode;
       const intent = typeof _req?.body?.intent === 'string' ? _req.body.intent.trim().toLowerCase() : undefined;
       const mode = typeof modeInput === 'string'
         ? modeInput.trim().toLowerCase()
         : normalizeTunnelMode(modeInput);
+      if (typeof _req?.body?.mode === 'string' && _req.body.mode.trim().length > 0 && !isSupportedTunnelMode(mode)) {
+        return res.status(422).json({ ok: false, error: `Unsupported tunnel mode: ${mode}`, code: 'mode_unsupported' });
+      }
       const selectedPresetId = typeof _req?.body?.managedRemoteTunnelPresetId === 'string' ? _req.body.managedRemoteTunnelPresetId.trim() : '';
       const selectedPresetName = typeof _req?.body?.managedRemoteTunnelPresetName === 'string' ? _req.body.managedRemoteTunnelPresetName.trim() : '';
       const requestConfigPath = normalizeOptionalPath(_req?.body?.configPath)
@@ -8317,7 +8336,7 @@ async function main(options = {}) {
             : 500);
         return res.status(status).json({ ok: false, error: error.message, code: error.code });
       }
-      return res.status(500).json({ ok: false, error: error?.message || 'Failed to start tunnel', code: 'startup_failed' });
+      return res.status(500).json({ ok: false, error: 'Failed to start tunnel', code: 'startup_failed' });
     }
   });
 

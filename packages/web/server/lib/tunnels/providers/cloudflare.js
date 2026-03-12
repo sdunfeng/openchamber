@@ -175,7 +175,7 @@ export function createCloudflareTunnelProvider() {
       const remoteTokenValidation = validateTokenShape(request.token);
       const tokenMissing = typeof request.token !== 'string' || request.token.trim().length === 0;
       const hasSavedManagedRemoteProfile = request.hasSavedManagedRemoteProfile === true;
-      const savedProfileReadyDetail = 'Ready (at least one saved profile present).';
+      const savedProfileReadyDetail = 'at least one saved profile present';
       const managedRemoteChecks = [
         {
           id: 'startup_readiness',
