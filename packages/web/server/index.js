@@ -7575,10 +7575,10 @@ async function main(options = {}) {
       };
       const inferArch = (ua) => {
         const value = (ua || '').toLowerCase();
-        if (!value) return undefined;
+        if (!value) return 'unknown';
         if (value.includes('aarch64') || value.includes('arm64') || value.includes(' arm;') || value.includes('armv')) return 'arm64';
         if (value.includes('x86_64') || value.includes('x64') || value.includes('amd64') || value.includes('win64') || value.includes('x86-64')) return 'x64';
-        return undefined;
+        return 'unknown';
       };
       const inferPlatform = (ua) => {
         const value = (ua || '').toLowerCase();

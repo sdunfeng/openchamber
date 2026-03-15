@@ -55,7 +55,7 @@ function mapPlatform(value) {
 function mapArch(value) {
   if (value === 'arm64' || value === 'aarch64') return 'arm64';
   if (value === 'x64' || value === 'amd64') return 'x64';
-  return 'none';
+  return 'unknown';
 }
 
 function normalizeAppType(value) {
@@ -74,7 +74,7 @@ function normalizePlatform(value) {
 }
 
 function normalizeArch(value) {
-  if (value === 'arm64' || value === 'x64' || value === 'none') return value;
+  if (value === 'arm64' || value === 'x64' || value === 'unknown') return value;
   return mapArch(process.arch);
 }
 

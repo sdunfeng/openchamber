@@ -123,10 +123,10 @@ const mapNodePlatformToApiPlatform = (value: string): 'macos' | 'windows' | 'lin
   return 'web';
 };
 
-const mapNodeArchToApiArch = (value: string): 'arm64' | 'x64' | 'none' => {
+const mapNodeArchToApiArch = (value: string): 'arm64' | 'x64' | 'unknown' => {
   if (value === 'arm64' || value === 'aarch64') return 'arm64';
   if (value === 'x64' || value === 'amd64') return 'x64';
-  return 'none';
+  return 'unknown';
 };
 
 const getOrCreateVSCodeInstallId = async (ctx?: BridgeContext): Promise<string> => {

@@ -44,7 +44,7 @@ function detectDeviceClass(): 'mobile' | 'tablet' | 'desktop' | 'unknown' {
   }
 }
 
-function detectArch(): 'arm64' | 'x64' | 'none' {
+function detectArch(): 'arm64' | 'x64' | 'unknown' {
   const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { userAgentData?: { architecture?: string } }).userAgentData : undefined;
   const fromUAData = nav?.architecture?.toLowerCase?.();
   if (fromUAData === 'arm' || fromUAData === 'arm64' || fromUAData === 'aarch64') return 'arm64';
@@ -53,7 +53,7 @@ function detectArch(): 'arm64' | 'x64' | 'none' {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : '';
   if (ua.includes('aarch64') || ua.includes('arm64') || ua.includes('armv')) return 'arm64';
   if (ua.includes('x86_64') || ua.includes('x64') || ua.includes('amd64') || ua.includes('win64')) return 'x64';
-  return 'none';
+  return 'unknown';
 }
 
 function detectPlatform(): 'macos' | 'windows' | 'linux' | 'web' {
