@@ -110,6 +110,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  public addFileMentions(paths: string[]) {
+    if (!this._view) {
+      return;
+    }
+
+    const cleanedPaths = paths
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+
+    if (cleanedPaths.length === 0) {
+      return;
+    }
+
+    this._view.show(true);
+    this._view.webview.postMessage({
+      type: 'command',
+      command: 'addFileMentions',
+      payload: { paths: cleanedPaths },
+    });
+  }
+
   public createNewSessionWithPrompt(prompt: string) {
     if (this._view) {
       // Reveal the webview panel
