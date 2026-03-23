@@ -2,10 +2,14 @@ import os from 'os';
 import path from 'path';
 
 export const TUNNEL_PROVIDER_CLOUDFLARE = 'cloudflare';
+export const TUNNEL_PROVIDER_NGROK = 'ngrok';
 
 export const TUNNEL_MODE_QUICK = 'quick';
 export const TUNNEL_MODE_MANAGED_REMOTE = 'managed-remote';
 export const TUNNEL_MODE_MANAGED_LOCAL = 'managed-local';
+export const TUNNEL_MODE_NGROK_EPHEMERAL = 'ephemeral';
+export const TUNNEL_MODE_NGROK_RESERVED = 'reserved';
+export const TUNNEL_MODE_NGROK_EDGE = 'edge';
 
 export const TUNNEL_INTENT_EPHEMERAL_PUBLIC = 'ephemeral-public';
 export const TUNNEL_INTENT_PERSISTENT_PUBLIC = 'persistent-public';
@@ -15,12 +19,6 @@ const SUPPORTED_TUNNEL_INTENTS = new Set([
   TUNNEL_INTENT_EPHEMERAL_PUBLIC,
   TUNNEL_INTENT_PERSISTENT_PUBLIC,
   TUNNEL_INTENT_PRIVATE_NETWORK,
-]);
-
-const SUPPORTED_TUNNEL_MODES = new Set([
-  TUNNEL_MODE_QUICK,
-  TUNNEL_MODE_MANAGED_REMOTE,
-  TUNNEL_MODE_MANAGED_LOCAL,
 ]);
 
 export class TunnelServiceError extends Error {
@@ -34,6 +32,16 @@ export class TunnelServiceError extends Error {
 
 const SUPPORTED_TUNNEL_PROVIDERS = new Set([
   TUNNEL_PROVIDER_CLOUDFLARE,
+  TUNNEL_PROVIDER_NGROK,
+]);
+
+const KNOWN_TUNNEL_MODES = new Set([
+  TUNNEL_MODE_QUICK,
+  TUNNEL_MODE_MANAGED_REMOTE,
+  TUNNEL_MODE_MANAGED_LOCAL,
+  TUNNEL_MODE_NGROK_EPHEMERAL,
+  TUNNEL_MODE_NGROK_RESERVED,
+  TUNNEL_MODE_NGROK_EDGE,
 ]);
 
 export function normalizeTunnelProvider(value) {
@@ -48,21 +56,15 @@ export function normalizeTunnelProvider(value) {
 }
 
 export function normalizeTunnelMode(value) {
-  if (typeof value !== 'string') {
+  if (value === undefined || value === null) {
     return TUNNEL_MODE_QUICK;
   }
-  const mode = value.trim().toLowerCase();
+  const mode = String(value).trim().toLowerCase();
   if (!mode) {
     return TUNNEL_MODE_QUICK;
   }
-  if (mode === TUNNEL_MODE_QUICK) {
-    return TUNNEL_MODE_QUICK;
-  }
-  if (mode === TUNNEL_MODE_MANAGED_REMOTE) {
-    return TUNNEL_MODE_MANAGED_REMOTE;
-  }
-  if (mode === TUNNEL_MODE_MANAGED_LOCAL) {
-    return TUNNEL_MODE_MANAGED_LOCAL;
+  if (KNOWN_TUNNEL_MODES.has(mode)) {
+    return mode;
   }
   return TUNNEL_MODE_QUICK;
 }
@@ -79,23 +81,35 @@ export function normalizeTunnelIntent(value) {
 }
 
 function modeIntentFallback(mode) {
-  if (mode === TUNNEL_MODE_QUICK) {
+  if (mode === TUNNEL_MODE_QUICK || mode === TUNNEL_MODE_NGROK_EPHEMERAL) {
     return TUNNEL_INTENT_EPHEMERAL_PUBLIC;
   }
-  if (mode === TUNNEL_MODE_MANAGED_REMOTE || mode === TUNNEL_MODE_MANAGED_LOCAL) {
+  if (
+    mode === TUNNEL_MODE_MANAGED_REMOTE
+    || mode === TUNNEL_MODE_MANAGED_LOCAL
+    || mode === TUNNEL_MODE_NGROK_RESERVED
+    || mode === TUNNEL_MODE_NGROK_EDGE
+  ) {
     return TUNNEL_INTENT_PERSISTENT_PUBLIC;
   }
   return undefined;
 }
 
-function normalizeTunnelModeForRequest(value) {
+function defaultModeForProvider(provider) {
+  if (provider === TUNNEL_PROVIDER_NGROK) {
+    return TUNNEL_MODE_NGROK_EPHEMERAL;
+  }
+  return TUNNEL_MODE_QUICK;
+}
+
+function normalizeTunnelModeForRequest(value, provider) {
   if (typeof value === 'string') {
     const mode = value.trim().toLowerCase();
-    if (mode === TUNNEL_MODE_QUICK || mode === TUNNEL_MODE_MANAGED_REMOTE || mode === TUNNEL_MODE_MANAGED_LOCAL) {
+    if (mode.length > 0) {
       return mode;
     }
   }
-  return TUNNEL_MODE_QUICK;
+  return defaultModeForProvider(provider);
 }
 
 export function normalizeOptionalPath(value) {
@@ -128,12 +142,16 @@ export function normalizeOptionalPath(value) {
 }
 
 export function isSupportedTunnelMode(mode) {
-  return SUPPORTED_TUNNEL_MODES.has(mode);
+  return KNOWN_TUNNEL_MODES.has(mode);
 }
 
 export function normalizeTunnelStartRequest(input = {}, defaults = {}) {
   const provider = normalizeTunnelProvider(input.provider ?? defaults.provider);
-  const mode = normalizeTunnelModeForRequest(input.mode ?? defaults.mode);
+  const modeInput = input.mode
+    ?? input.connectionType
+    ?? defaults.mode
+    ?? defaults.connectionType;
+  const mode = normalizeTunnelModeForRequest(modeInput, provider);
   const explicitIntent = normalizeTunnelIntent(input.intent ?? defaults.intent);
   const intent = explicitIntent ?? modeIntentFallback(mode);
   const configPathValue = Object.prototype.hasOwnProperty.call(input, 'configPath')
@@ -141,21 +159,47 @@ export function normalizeTunnelStartRequest(input = {}, defaults = {}) {
     : defaults.configPath;
   const configPath = normalizeOptionalPath(configPathValue);
 
-  const token = typeof (input.token ?? defaults.token) === 'string'
-    ? (input.token ?? defaults.token).trim()
+  const tokenValue = input.token
+    ?? input.authToken
+    ?? defaults.token
+    ?? defaults.authToken;
+  const token = typeof tokenValue === 'string'
+    ? tokenValue.trim()
     : '';
 
   const hostname = typeof (input.hostname ?? defaults.hostname) === 'string'
     ? (input.hostname ?? defaults.hostname).trim().toLowerCase()
     : '';
 
+  const reservedDomain = typeof (input.reservedDomain ?? defaults.reservedDomain) === 'string'
+    ? (input.reservedDomain ?? defaults.reservedDomain).trim().toLowerCase()
+    : '';
+
+  const edgeIdValue = input.edgeId
+    ?? defaults.edgeId;
+  const edgeId = typeof edgeIdValue === 'string' ? edgeIdValue.trim() : '';
+
+  const endpointId = typeof (input.endpointId ?? defaults.endpointId) === 'string'
+    ? (input.endpointId ?? defaults.endpointId).trim()
+    : '';
+
+  const authTokenSource = typeof (input.authTokenSource ?? defaults.authTokenSource) === 'string'
+    ? (input.authTokenSource ?? defaults.authTokenSource).trim().toLowerCase()
+    : '';
+
   return {
     provider,
     mode,
+    connectionType: mode,
     intent,
     configPath,
     token,
+    authToken: token,
     hostname,
+    reservedDomain,
+    edgeId,
+    endpointId,
+    authTokenSource,
   };
 }
 
@@ -166,10 +210,6 @@ export function validateTunnelStartRequest(request, capabilities) {
 
   if (!request.provider) {
     throw new TunnelServiceError('validation_error', 'Tunnel provider is required');
-  }
-
-  if (!isSupportedTunnelMode(request.mode)) {
-    throw new TunnelServiceError('mode_unsupported', `Unsupported tunnel mode: ${request.mode}`);
   }
 
   if (!capabilities || capabilities.provider !== request.provider) {
@@ -201,7 +241,13 @@ export function validateTunnelStartRequest(request, capabilities) {
 
   if (requiredFields.includes('token')) {
     if (!request.token) {
-      throw new TunnelServiceError('validation_error', 'Managed remote tunnel token is required');
+      const allowsConfigTokenFallback = request.provider === TUNNEL_PROVIDER_NGROK && Boolean(request.configPath);
+      if (!allowsConfigTokenFallback && request.mode === TUNNEL_MODE_MANAGED_REMOTE) {
+        throw new TunnelServiceError('validation_error', 'Managed remote tunnel token is required');
+      }
+      if (!allowsConfigTokenFallback) {
+        throw new TunnelServiceError('validation_error', `Mode '${request.mode}' requires a token`);
+      }
     }
   }
 
@@ -214,6 +260,18 @@ export function validateTunnelStartRequest(request, capabilities) {
   if (requiredFields.includes('configPath')) {
     if (request.configPath === undefined || request.configPath === null || request.configPath === '') {
       throw new TunnelServiceError('validation_error', `Mode '${request.mode}' requires a configPath`);
+    }
+  }
+
+  if (requiredFields.includes('reservedDomain')) {
+    if (!request.reservedDomain && !request.configPath) {
+      throw new TunnelServiceError('validation_error', `Mode '${request.mode}' requires a reservedDomain`);
+    }
+  }
+
+  if (requiredFields.includes('edgeId')) {
+    if (!request.edgeId && !request.endpointId && !request.configPath) {
+      throw new TunnelServiceError('validation_error', `Mode '${request.mode}' requires an edgeId`);
     }
   }
 }

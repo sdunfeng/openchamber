@@ -47,6 +47,53 @@ Use a local `cloudflared` config:
 openchamber tunnel start --provider cloudflare --mode managed-local --config ~/.cloudflared/config.yml
 ```
 
+## Ngrok modes (CLI + server)
+
+Ngrok support is available for CLI/server flows in this phase.
+
+If token flags are omitted, ngrok token resolution uses this order:
+
+1. `--token` / `--token-file` / `--token-stdin`
+2. `NGROK_AUTHTOKEN`
+3. `ngrok config check` resolved config file (`authtoken`)
+
+### Ephemeral
+
+```bash
+openchamber tunnel start --provider ngrok --connection-type ephemeral --token-file ~/.secrets/ngrok-token
+```
+
+### Reserved
+
+```bash
+openchamber tunnel start --provider ngrok --connection-type reserved --reserved-domain app.example.ngrok.app --token-file ~/.secrets/ngrok-token
+```
+
+You can also use ngrok config as source of values:
+
+```bash
+openchamber tunnel start --provider ngrok --connection-type reserved --config ~/.ngrok2/ngrok.yml --endpoint-id your_endpoint_name
+```
+
+When `--config` is provided, OpenChamber can resolve token and endpoint values from config. If multiple endpoints exist, provide `--endpoint-id <name>`.
+
+### Edge
+
+```bash
+openchamber tunnel start --provider ngrok --connection-type edge --edge-id https://example.ngrok.app --token-file ~/.secrets/ngrok-token
+```
+
+Config-driven edge example:
+
+```bash
+openchamber tunnel start --provider ngrok --connection-type edge --config ~/.ngrok2/ngrok.yml --endpoint-id your_endpoint_name
+```
+
+For both `reserved` and `edge`, endpoint resolution rules are:
+
+- one endpoint in config => auto-selected
+- multiple endpoints in config => pass `--endpoint-id <name>`
+
 ## Profiles (managed-remote)
 
 Save a reusable profile:

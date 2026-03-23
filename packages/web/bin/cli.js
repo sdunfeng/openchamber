@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { isModuleCliExecution } from './cli-entry.js';
 import { cloudflareTunnelProviderCapabilities } from '../server/lib/tunnels/providers/cloudflare.js';
+import { ngrokTunnelProviderCapabilities } from '../server/lib/tunnels/providers/ngrok.js';
 import {
   intro as clackIntro, outro as clackOutro, log as clackLog,
   box as clackBox, confirm as clackConfirm,
@@ -57,7 +58,11 @@ const SESSION_TTL_PICKER_OPTIONS = [
   { value: '__custom__', label: 'Custom' },
 ];
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-const DEFAULT_TUNNEL_PROVIDER_CAPABILITIES = [cloudflareTunnelProviderCapabilities];
+const DEFAULT_TUNNEL_PROVIDER_CAPABILITIES = [
+  cloudflareTunnelProviderCapabilities,
+  ngrokTunnelProviderCapabilities,
+];
+const NGROK_CONNECTION_TYPES = new Set(['ephemeral', 'reserved', 'edge']);
 
 let onCancelCleanup = null;
 let activeCommandOptions = null;
@@ -275,9 +280,13 @@ function buildTunnelStartReplayCommand({
   port,
   provider,
   mode,
+  connectionType,
   profileName,
   configPath,
   hostname,
+  reservedDomain,
+  edgeId,
+  endpointId,
   connectTtlMs,
   sessionTtlMs,
   qr,
@@ -299,11 +308,23 @@ function buildTunnelStartReplayCommand({
   if (mode) {
     parts.push('--mode', shellQuote(mode));
   }
+  if (connectionType) {
+    parts.push('--connection-type', shellQuote(connectionType));
+  }
   if (typeof configPath === 'string' && configPath.trim().length > 0) {
     parts.push('--config', shellQuote(configPath));
   }
   if (typeof hostname === 'string' && hostname.trim().length > 0) {
     parts.push('--hostname', shellQuote(hostname));
+  }
+  if (typeof reservedDomain === 'string' && reservedDomain.trim().length > 0) {
+    parts.push('--reserved-domain', shellQuote(reservedDomain));
+  }
+  if (typeof edgeId === 'string' && edgeId.trim().length > 0) {
+    parts.push('--edge-id', shellQuote(edgeId));
+  }
+  if (typeof endpointId === 'string' && endpointId.trim().length > 0) {
+    parts.push('--endpoint-id', shellQuote(endpointId));
   }
   const connectTtl = formatDurationForCli(connectTtlMs);
   if (connectTtl) {
@@ -587,6 +608,10 @@ function parseArgs(argv = process.argv.slice(2)) {
     tokenFile: undefined,
     tokenStdin: false,
     hostname: undefined,
+    connectionType: undefined,
+    reservedDomain: undefined,
+    edgeId: undefined,
+    endpointId: undefined,
     connectTtl: undefined,
     sessionTtl: undefined,
     qr: false,
@@ -727,6 +752,30 @@ function parseArgs(argv = process.argv.slice(2)) {
         const { value, nextIndex } = consumeValue(i, inlineValue);
         i = nextIndex;
         options.hostname = typeof value === 'string' ? value : options.hostname;
+        break;
+      }
+      case 'connection-type': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.connectionType = typeof value === 'string' ? value : options.connectionType;
+        break;
+      }
+      case 'reserved-domain': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.reservedDomain = typeof value === 'string' ? value : options.reservedDomain;
+        break;
+      }
+      case 'edge-id': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.edgeId = typeof value === 'string' ? value : options.edgeId;
+        break;
+      }
+      case 'endpoint-id': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.endpointId = typeof value === 'string' ? value : options.endpointId;
         break;
       }
       case 'connect-ttl': {
@@ -909,12 +958,17 @@ COMMON OPTIONS:
 START OPTIONS:
   --provider <id>         Tunnel provider id (default: cloudflare)
   --mode <id>             Tunnel mode (default: quick)
+  --connection-type <id>  Ngrok connection type (ephemeral|reserved|edge)
   --profile <name>        Start tunnel from saved profile name
-  --config [path]         Managed-local config path (optional)
-  --token <token>         Managed-remote token (visible in process list)
+  --config [path]         Config path (cloudflared managed-local or ngrok config)
+  --token <token>         Provider token (visible in process list)
   --token-file <path>     Read token from file (recommended)
   --token-stdin           Read token from stdin
+                          Ngrok also reads NGROK_AUTHTOKEN when token flags are omitted
   --hostname <hostname>   Managed-remote hostname
+  --reserved-domain <d>   Ngrok reserved domain (reserved mode)
+  --edge-id <id>          Ngrok edge id (edge mode)
+  --endpoint-id <id>      Alias of --edge-id
   --connect-ttl <value>   Connect-link TTL (e.g. 30m, 24h, 1d)
   --session-ttl <value>   Session TTL (e.g. 8h, 24h, 1d)
   --qr                    Print QR code for resulting tunnel URL
@@ -953,6 +1007,10 @@ EXAMPLES:
   openchamber tunnel start --profile prod-main
   openchamber tunnel start --provider cloudflare --mode managed-remote --token-file ~/.secrets/cf-token --hostname app.example.com
   openchamber tunnel start --provider cloudflare --mode managed-local --config ~/.cloudflared/config.yml
+  openchamber tunnel start --provider ngrok --connection-type ephemeral --token-file ~/.secrets/ngrok-token
+  openchamber tunnel start --provider ngrok --connection-type reserved --reserved-domain app.example.ngrok.app --token-file ~/.secrets/ngrok-token
+  openchamber tunnel start --provider ngrok --connection-type reserved --config ~/.ngrok2/ngrok.yml --endpoint-id your_endpoint_name
+  openchamber tunnel start --provider ngrok --connection-type edge --edge-id https://example.ngrok.app --token-file ~/.secrets/ngrok-token
   openchamber tunnel start --dry-run --provider cloudflare --mode managed-remote --token-file ~/.secrets/cf-token --hostname app.example.com
   echo "$TOKEN" | openchamber tunnel profile add --provider cloudflare --mode managed-remote --name prod-main --hostname app.example.com --token-stdin
   openchamber tunnel profile list --provider cloudflare
@@ -977,7 +1035,7 @@ _openchamber_tunnel() {
   tunnel_commands="help providers ready doctor status start stop profile completion"
   profile_commands="list show add remove"
   common_flags="--port --foreground --no-daemon --json --all --help --version --plain --quiet"
-  start_flags="--provider --mode --profile --config --token --token-file --token-stdin --hostname --connect-ttl --session-ttl --qr --no-qr --dry-run --show-secrets"
+  start_flags="--provider --mode --connection-type --profile --config --token --token-file --token-stdin --hostname --reserved-domain --edge-id --endpoint-id --connect-ttl --session-ttl --qr --no-qr --dry-run --show-secrets"
 
   if [[ \${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "\${commands}" -- "\${cur}") )
@@ -1103,12 +1161,16 @@ complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_s
 
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l provider -d 'Provider id'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l mode -d 'Tunnel mode'
+complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l connection-type -d 'Ngrok connection type'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l profile -d 'Profile name'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l config -d 'Config path'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token -d 'Token'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token-file -d 'Token file path'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token-stdin -d 'Read token from stdin'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l hostname -d 'Hostname'
+complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l reserved-domain -d 'Reserved domain'
+complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l edge-id -d 'Edge id'
+complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l endpoint-id -d 'Alias of edge id'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l dry-run -d 'Validate without applying'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l qr -d 'Show QR code'
 `;
@@ -1326,6 +1388,21 @@ function resolveToken(options) {
   }
 
   return typeof options.token === 'string' ? options.token.trim() : undefined;
+}
+
+function hasExplicitTokenSource(options) {
+  return Boolean(
+    options.tokenStdin
+    || (typeof options.tokenFile === 'string' && options.tokenFile.trim().length > 0)
+    || (typeof options.token === 'string' && options.token.trim().length > 0)
+  );
+}
+
+function resolveNgrokTokenFromEnvironment() {
+  const value = typeof process.env.NGROK_AUTHTOKEN === 'string'
+    ? process.env.NGROK_AUTHTOKEN.trim()
+    : '';
+  return value.length > 0 ? value : undefined;
 }
 
 function redactProfileForOutput(profile, showSecrets = false) {
@@ -2283,7 +2360,15 @@ function formatTunnelStatusLine(statusBody, port) {
 }
 
 function formatModeRequirements(mode) {
-  const requires = Array.isArray(mode?.requires) ? mode.requires.filter(Boolean) : [];
+  const requires = Array.isArray(mode?.requires)
+    ? mode.requires
+      .filter(Boolean)
+      .map((entry) => {
+        if (entry === 'reservedDomain') return 'reserved-domain';
+        if (entry === 'edgeId') return 'edge-id';
+        return entry;
+      })
+    : [];
   if ((mode?.key || '') === 'managed-local') {
     return 'config-path (or default cloudflared config)';
   }
@@ -3544,12 +3629,23 @@ const commands = {
         let doctorProfile = null;
         let doctorHostnameOverride = typeof options.hostname === 'string' ? options.hostname.trim() : '';
         const explicitHostnameProvided = doctorHostnameOverride.length > 0;
-        const explicitTokenProvided = Boolean(options.tokenStdin)
-          || (typeof options.token === 'string' && options.token.trim().length > 0)
-          || (typeof options.tokenFile === 'string' && options.tokenFile.trim().length > 0);
+        const explicitTokenProvided = hasExplicitTokenSource(options);
         let doctorTokenValue = resolveToken(options);
+        let doctorTokenSource = explicitTokenProvided ? 'explicit' : '';
+        if ((!doctorTokenValue || doctorTokenValue.trim().length === 0) && providerOption === 'ngrok') {
+          doctorTokenValue = resolveNgrokTokenFromEnvironment();
+          if (doctorTokenValue) {
+            doctorTokenSource = 'env';
+          }
+        }
         let hasSavedManagedRemoteProfile = false;
-        const normalizedMode = typeof options.mode === 'string' ? options.mode.trim().toLowerCase() : '';
+        const connectionTypeOption = typeof options.connectionType === 'string' ? options.connectionType.trim().toLowerCase() : '';
+        const normalizedMode = connectionTypeOption || (typeof options.mode === 'string' ? options.mode.trim().toLowerCase() : '');
+        const doctorReservedDomain = typeof options.reservedDomain === 'string' ? options.reservedDomain.trim().toLowerCase() : '';
+        const doctorEndpointId = typeof options.endpointId === 'string' ? options.endpointId.trim() : '';
+        const doctorEdgeId = typeof options.edgeId === 'string'
+          ? options.edgeId.trim()
+          : doctorEndpointId;
 
         if (typeof options.profile === 'string' && options.profile.trim().length > 0) {
           const store = ensureTunnelProfilesMigrated();
@@ -3591,21 +3687,46 @@ const commands = {
         if (diagnosticsEntries.length > 0) {
           const query = new URLSearchParams();
           if (providerOption) query.set('provider', providerOption);
-          if (typeof options.mode === 'string' && options.mode.trim().length > 0) {
-            query.set('mode', options.mode.trim().toLowerCase());
+          if (normalizedMode) {
+            query.set('mode', normalizedMode);
+            query.set('connectionType', normalizedMode);
           }
           if (typeof options.configPath === 'string') query.set('configPath', options.configPath);
           if (doctorHostnameOverride.length > 0) {
             query.set('managedRemoteTunnelHostname', doctorHostnameOverride);
           }
+          if (doctorReservedDomain.length > 0) {
+            query.set('reservedDomain', doctorReservedDomain);
+          }
+          if (doctorEdgeId.length > 0) {
+            query.set('edgeId', doctorEdgeId);
+          }
+          if (doctorEndpointId.length > 0) {
+            query.set('endpointId', doctorEndpointId);
+          }
           if (hasSavedManagedRemoteProfile) {
             query.set('hasSavedManagedRemoteProfile', '1');
           }
           const doctorBody = {};
-          doctorBody.managedRemoteTunnelTokenProvided = explicitTokenProvided;
+          const tokenProvided = explicitTokenProvided || (providerOption === 'ngrok' && typeof doctorTokenValue === 'string' && doctorTokenValue.trim().length > 0);
+          doctorBody.managedRemoteTunnelTokenProvided = tokenProvided;
+          doctorBody.authTokenProvided = tokenProvided;
           doctorBody.managedRemoteTunnelHostnameProvided = explicitHostnameProvided;
           if (typeof doctorTokenValue === 'string' && doctorTokenValue.trim().length > 0) {
             doctorBody.managedRemoteTunnelToken = doctorTokenValue;
+            doctorBody.authToken = doctorTokenValue;
+            if (doctorTokenSource) {
+              doctorBody.authTokenSource = doctorTokenSource;
+            }
+          }
+          if (doctorReservedDomain.length > 0) {
+            doctorBody.reservedDomain = doctorReservedDomain;
+          }
+          if (doctorEdgeId.length > 0) {
+            doctorBody.edgeId = doctorEdgeId;
+          }
+          if (doctorEndpointId.length > 0) {
+            doctorBody.endpointId = doctorEndpointId;
           }
 
           const failedPorts = [];
@@ -3884,9 +4005,23 @@ const commands = {
         let mode = typeof options.mode === 'string' && options.mode.trim().length > 0
           ? options.mode.trim().toLowerCase()
           : '';
+        const rawConnectionType = typeof options.connectionType === 'string' && options.connectionType.trim().length > 0
+          ? options.connectionType.trim().toLowerCase()
+          : '';
         let resolvedTokenValue = resolveToken(options);
         let token = typeof resolvedTokenValue === 'string' ? resolvedTokenValue : undefined;
+        const explicitStartTokenProvided = hasExplicitTokenSource(options);
+        let tokenSource = explicitStartTokenProvided ? 'explicit' : '';
         let hostname = typeof options.hostname === 'string' ? options.hostname : undefined;
+        let reservedDomain = typeof options.reservedDomain === 'string' && options.reservedDomain.trim().length > 0
+          ? options.reservedDomain.trim().toLowerCase()
+          : undefined;
+        let edgeId = typeof options.edgeId === 'string' && options.edgeId.trim().length > 0
+          ? options.edgeId.trim()
+          : undefined;
+        const endpointId = typeof options.endpointId === 'string' && options.endpointId.trim().length > 0
+          ? options.endpointId.trim()
+          : undefined;
         let selectedProfile = null;
 
         if (options.explicitPort) {
@@ -3907,7 +4042,7 @@ const commands = {
         }
 
         // Interactive profile selection when no profile/mode specified in TTY
-        if (!selectedProfile && !mode && canPrompt(options)) {
+        if (!selectedProfile && !mode && !rawConnectionType && canPrompt(options)) {
           const store = ensureTunnelProfilesMigrated();
           if (store.profiles.length > 0) {
             const profileChoice = await clackSelect({
@@ -3939,8 +4074,25 @@ const commands = {
 
         provider = provider || 'cloudflare';
 
+        if (rawConnectionType) {
+          if (provider !== 'ngrok') {
+            throw new Error('--connection-type is supported only with --provider ngrok.');
+          }
+          if (!NGROK_CONNECTION_TYPES.has(rawConnectionType)) {
+            throw new Error(`Unsupported ngrok connection type: ${rawConnectionType}. Use ephemeral, reserved, or edge.`);
+          }
+          mode = rawConnectionType;
+        }
+
+        if ((!token || token.trim().length === 0) && provider === 'ngrok') {
+          token = resolveNgrokTokenFromEnvironment();
+          if (token) {
+            tokenSource = 'env';
+          }
+        }
+
         // Interactive mode selection when mode not yet resolved in TTY
-        if (!mode && canPrompt(options)) {
+        if (!mode && !rawConnectionType && canPrompt(options)) {
           const providerCaps = DEFAULT_TUNNEL_PROVIDER_CAPABILITIES.find(
             (cap) => cap.provider === provider
           );
@@ -3962,7 +4114,20 @@ const commands = {
           }
         }
 
-        mode = mode || 'quick';
+        if (!mode) {
+          mode = provider === 'ngrok' ? 'ephemeral' : 'quick';
+        }
+
+        if ((!token || token.trim().length === 0) && provider === 'ngrok') {
+          token = resolveNgrokTokenFromEnvironment();
+          if (token) {
+            tokenSource = 'env';
+          }
+        }
+
+        if (provider !== 'ngrok' && NGROK_CONNECTION_TYPES.has(mode)) {
+          throw new Error(`Mode '${mode}' is available only for provider ngrok.`);
+        }
         if (mode === 'managed-remote') {
           if (!(typeof hostname === 'string' && hostname.trim().length > 0)) {
             if (canPrompt(options)) {
@@ -4154,6 +4319,86 @@ const commands = {
           }
         }
 
+        if (provider === 'ngrok') {
+          if (!NGROK_CONNECTION_TYPES.has(mode)) {
+            throw new Error(`Unsupported ngrok mode '${mode}'. Use ephemeral, reserved, or edge.`);
+          }
+
+          const hasNgrokConfigPath = typeof options.configPath === 'string' && options.configPath.trim().length > 0;
+          if (!(typeof token === 'string' && token.trim().length > 0)) {
+            if (hasNgrokConfigPath) {
+              // allow server-side token resolution from supplied ngrok config
+            } else if (canPrompt(options)) {
+              const entered = await clackPassword({
+                message: 'Enter ngrok auth token',
+              });
+              if (clackIsCancel(entered) || !entered || !entered.trim()) {
+                clackCancel('Tunnel start cancelled.');
+                return;
+              }
+              token = entered.trim();
+            } else {
+              throw new Error('Ngrok requires a token (--token, --token-file, --token-stdin, NGROK_AUTHTOKEN, or --config <ngrok-config.yml>).');
+            }
+          }
+
+          if (mode === 'reserved' && !(typeof reservedDomain === 'string' && reservedDomain.trim().length > 0)) {
+            if (hasNgrokConfigPath) {
+              // allow server-side resolution from ngrok config
+            } else if (canPrompt(options)) {
+              const enteredReservedDomain = await clackText({
+                message: 'Enter ngrok reserved domain',
+                placeholder: 'app.example.ngrok.app',
+                validate(value) {
+                  if (typeof value !== 'string' || value.trim().length === 0) {
+                    return 'Reserved domain is required.';
+                  }
+                  return undefined;
+                },
+              });
+              if (clackIsCancel(enteredReservedDomain)) {
+                clackCancel('Tunnel start cancelled.');
+                return;
+              }
+              reservedDomain = enteredReservedDomain.trim().toLowerCase();
+            } else {
+              throw new Error('Ngrok reserved mode requires --reserved-domain <domain> or --config <ngrok-config.yml>.');
+            }
+          }
+
+          if (mode === 'edge' && !(typeof edgeId === 'string' && edgeId.trim().length > 0)) {
+            if (hasNgrokConfigPath) {
+              // allow server-side resolution from ngrok config
+            } else if (canPrompt(options)) {
+              const enteredEdgeId = await clackText({
+                message: 'Enter ngrok edge ID or endpoint URL',
+                placeholder: 'https://example.ngrok.app',
+                validate(value) {
+                  if (typeof value !== 'string' || value.trim().length === 0) {
+                    return 'Edge ID is required.';
+                  }
+                  return undefined;
+                },
+              });
+              if (clackIsCancel(enteredEdgeId)) {
+                clackCancel('Tunnel start cancelled.');
+                return;
+              }
+              edgeId = enteredEdgeId.trim();
+            } else {
+              throw new Error('Ngrok edge mode requires --edge-id <id> (or --endpoint-id <id>) or --config <ngrok-config.yml>.');
+            }
+          }
+
+          if (typeof options.token === 'string' && !options.tokenFile && !options.tokenStdin && canPrompt(options)) {
+            clackBox(
+              'Token passed via --token is visible in your shell history and process list.\n'
+              + 'Consider using --token-file or --token-stdin for better security.',
+              'Security Warning',
+            );
+          }
+        }
+
         const ttlOverrides = await resolveTunnelTtlOverrides(options);
         if (ttlOverrides === null) {
           return;
@@ -4166,7 +4411,11 @@ const commands = {
             dryRun: true,
             provider,
             mode,
+            connectionType: provider === 'ngrok' ? mode : null,
             hostname: hostname || null,
+            reservedDomain: reservedDomain || null,
+            edgeId: edgeId || null,
+            endpointId: endpointId || null,
             hasToken: typeof token === 'string' && token.trim().length > 0,
             profile: selectedProfile ? selectedProfile.name : null,
             configPath: options.configPath || null,
@@ -4177,7 +4426,12 @@ const commands = {
             printJson(dryRunResult);
           } else if (!isQuietMode(options)) {
             clackIntro('Tunnel Start (dry-run)');
-            logStatus('info', `Would start ${clackFormatProviderWithIcon(provider)}/${mode}`, hostname || '(ephemeral URL)');
+            const detail = provider === 'ngrok'
+              ? (mode === 'reserved'
+                ? (reservedDomain || '(reserved domain missing)')
+                : (mode === 'edge' ? (edgeId || '(edge id missing)') : '(ephemeral URL)'))
+              : (hostname || '(ephemeral URL)');
+            logStatus('info', `Would start ${clackFormatProviderWithIcon(provider)}/${mode}`, detail);
             clackOutro('dry-run complete (no changes applied)');
           }
           return;
@@ -4301,12 +4555,18 @@ const commands = {
         const payload = {
           provider,
           mode,
+          ...(provider === 'ngrok' ? { connectionType: mode } : {}),
           ...(typeof connectTtlMs === 'number' ? { connectTtlMs } : {}),
           ...(typeof sessionTtlMs === 'number' ? { sessionTtlMs } : {}),
           ...(options.configPath === null ? { configPath: null } : {}),
           ...(typeof options.configPath === 'string' ? { configPath: options.configPath } : {}),
           ...(typeof token === 'string' ? { token } : {}),
+          ...(provider === 'ngrok' && typeof token === 'string' ? { authToken: token } : {}),
+          ...(provider === 'ngrok' && typeof token === 'string' && tokenSource ? { authTokenSource: tokenSource } : {}),
           ...(typeof hostname === 'string' ? { hostname } : {}),
+          ...(provider === 'ngrok' && typeof reservedDomain === 'string' ? { reservedDomain } : {}),
+          ...(provider === 'ngrok' && typeof edgeId === 'string' ? { edgeId } : {}),
+          ...(provider === 'ngrok' && typeof endpointId === 'string' ? { endpointId } : {}),
           ...(selectedProfile ? {
             managedRemoteTunnelPresetId: selectedProfile.id,
             managedRemoteTunnelPresetName: selectedProfile.name,
@@ -4354,9 +4614,13 @@ const commands = {
           port: instance.port,
           provider,
           mode,
+          connectionType: provider === 'ngrok' ? mode : undefined,
           profileName: selectedProfile?.name,
           configPath: options.configPath,
           hostname,
+          reservedDomain,
+          edgeId,
+          endpointId,
           connectTtlMs,
           sessionTtlMs,
           qr: options.qr === true,

@@ -30,6 +30,11 @@ openchamber tunnel profile add --provider cloudflare --mode managed-remote --nam
 openchamber tunnel start --profile prod-main
 openchamber tunnel start --provider cloudflare --mode quick --qr
 openchamber tunnel start --provider cloudflare --mode managed-local --config ~/.cloudflared/config.yml
+openchamber tunnel start --provider ngrok --connection-type ephemeral --token-file ~/.secrets/ngrok-token
+openchamber tunnel start --provider ngrok --connection-type reserved --reserved-domain app.example.ngrok.app --token-file ~/.secrets/ngrok-token
+openchamber tunnel start --provider ngrok --connection-type reserved --config ~/.ngrok2/ngrok.yml --endpoint-id your_endpoint_name
+openchamber tunnel start --provider ngrok --connection-type edge --edge-id https://example.ngrok.app --token-file ~/.secrets/ngrok-token
+# Or set NGROK_AUTHTOKEN and omit token flags for ngrok.
 openchamber tunnel status --all      # Show tunnel state across instances
 openchamber tunnel stop --port 3000  # Stop tunnel only (server stays running)
 openchamber logs                     # Follow latest instance logs
@@ -183,6 +188,7 @@ systemctl --user enable --now opencode openchamber
 - **Cross-tab tracking** - session activity stays in sync across browser tabs
 
 - Cloudflare tunnel access with quick, managed-remote, and managed-local modes
+- Ngrok tunnel access with ephemeral, reserved, and edge connection types (CLI/server)
 - One-scan onboarding with tunnel QR + password URL helpers
 - Mobile-first experience: optimized chat controls, keyboard-safe layouts, and attachment-friendly UI
 - Background notifications plus reliable cross-tab session activity tracking
