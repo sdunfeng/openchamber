@@ -6,11 +6,13 @@ import type { ContentChangeReason } from '@/hooks/useChatScrollManager';
 import { useStreamingTextThrottle } from '../../hooks/useStreamingTextThrottle';
 import { resolveAssistantDisplayText, shouldRenderAssistantText } from './assistantTextVisibility';
 import { streamPerfCount, streamPerfObserve } from '@/stores/utils/streamDebug';
+import { useSessionStore } from '@/stores/useSessionStore';
 
 type PartWithText = Part & { text?: string; content?: string; value?: string; time?: { start?: number; end?: number } };
 
 interface AssistantTextPartProps {
     part: Part;
+    sessionId?: string;
     messageId: string;
     streamPhase: StreamPhase;
     chatRenderMode?: 'sorted' | 'live';
@@ -19,11 +21,27 @@ interface AssistantTextPartProps {
 
 const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
     part,
+    sessionId,
     messageId,
     streamPhase,
     chatRenderMode = 'live',
 }) => {
-    const partWithText = part as PartWithText;
+    const livePart = useSessionStore(React.useCallback((state) => {
+        if (!sessionId || typeof part.id !== 'string' || part.id.length === 0) {
+            return null;
+        }
+
+        const message = (state.messages.get(sessionId) ?? []).find((entry) => entry.info.id === messageId);
+        if (!message) {
+            return null;
+        }
+
+        const match = message.parts.find((candidate) => candidate?.id === part.id);
+        return match ?? null;
+    }, [messageId, part.id, sessionId]));
+
+    const renderPart = livePart ?? part;
+    const partWithText = renderPart as PartWithText;
     const rawText = typeof partWithText.text === 'string' ? partWithText.text : '';
     const contentText = typeof partWithText.content === 'string' ? partWithText.content : '';
     const valueText = typeof partWithText.value === 'string' ? partWithText.value : '';
@@ -83,7 +101,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
     const time = partWithText.time;
     const isFinalized = Boolean(time && typeof time.end !== 'undefined');
 
-    const isRenderableTextPart = part.type === 'text' || part.type === 'reasoning';
+    const isRenderableTextPart = renderPart.type === 'text' || renderPart.type === 'reasoning';
     if (!isRenderableTextPart) {
         return null;
     }
@@ -102,15 +120,22 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
         >
             <MarkdownRenderer
                 content={displayTextContent}
-                part={part}
+                part={renderPart}
                 messageId={messageId}
                 isAnimated={false}
                 isStreaming={isStreaming}
                 disableStreamAnimation={chatRenderMode === 'sorted'}
-                variant={part.type === 'reasoning' ? 'reasoning' : 'assistant'}
+                variant={renderPart.type === 'reasoning' ? 'reasoning' : 'assistant'}
             />
         </div>
     );
 };
 
-export default AssistantTextPart;
+export default React.memo(AssistantTextPart, (prev, next) => {
+    return prev.sessionId === next.sessionId
+        && prev.messageId === next.messageId
+        && prev.streamPhase === next.streamPhase
+        && prev.chatRenderMode === next.chatRenderMode
+        && prev.part.id === next.part.id
+        && prev.part.type === next.part.type;
+});

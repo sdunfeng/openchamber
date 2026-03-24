@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { ReactVirtualizerOptions, VirtualItem } from '@tanstack/react-virtual';
 
 import ChatMessage from './ChatMessage';
+import { areOptionalRenderRelevantMessagesEqual, areRenderRelevantMessagesEqual } from './message/renderCompare';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
 import TurnItem from './components/TurnItem';
@@ -395,7 +396,7 @@ interface MessageRowProps {
     scrollToBottom?: (options?: { instant?: boolean; force?: boolean }) => void;
 }
 
-const MessageRow = React.memo<MessageRowProps>(({
+const MessageRow = React.memo<MessageRowProps>(({ 
     message,
     previousMessage,
     nextMessage,
@@ -419,6 +420,32 @@ const MessageRow = React.memo<MessageRowProps>(({
             turnGroupingContext={turnGroupingContext}
         />
     );
+}, (prev, next) => {
+    const prevTurn = prev.turnGroupingContext;
+    const nextTurn = next.turnGroupingContext;
+
+    return areRenderRelevantMessagesEqual(prev.message, next.message)
+        && areOptionalRenderRelevantMessagesEqual(prev.previousMessage, next.previousMessage)
+        && areOptionalRenderRelevantMessagesEqual(prev.nextMessage, next.nextMessage)
+        && prev.animateUserOnMount === next.animateUserOnMount
+        && prev.onUserAnimationConsumed === next.onUserAnimationConsumed
+        && prev.onContentChange === next.onContentChange
+        && prev.scrollToBottom === next.scrollToBottom
+        && prevTurn?.turnId === nextTurn?.turnId
+        && prevTurn?.isFirstAssistantInTurn === nextTurn?.isFirstAssistantInTurn
+        && prevTurn?.isLastAssistantInTurn === nextTurn?.isLastAssistantInTurn
+        && prevTurn?.isWorking === nextTurn?.isWorking
+        && prevTurn?.isGroupExpanded === nextTurn?.isGroupExpanded
+        && prevTurn?.toggleGroup === nextTurn?.toggleGroup
+        && prevTurn?.activityGroupSegments === nextTurn?.activityGroupSegments
+        && prevTurn?.activityParts === nextTurn?.activityParts
+        && prev.animationHandlers?.onChunk === next.animationHandlers?.onChunk
+        && prev.animationHandlers?.onComplete === next.animationHandlers?.onComplete
+        && prev.animationHandlers?.onStreamingCandidate === next.animationHandlers?.onStreamingCandidate
+        && prev.animationHandlers?.onAnimationStart === next.animationHandlers?.onAnimationStart
+        && prev.animationHandlers?.onReservationCancelled === next.animationHandlers?.onReservationCancelled
+        && prev.animationHandlers?.onReasoningBlock === next.animationHandlers?.onReasoningBlock
+        && prev.animationHandlers?.onAnimatedHeightChange === next.animationHandlers?.onAnimatedHeightChange;
 });
 
 MessageRow.displayName = 'MessageRow';
@@ -664,6 +691,15 @@ const UngroupedMessageRow: React.FC<UngroupedMessageRowProps> = React.memo(({
             scrollToBottom={scrollToBottom}
         />
     );
+}, (prev, next) => {
+    return areRenderRelevantMessagesEqual(prev.message, next.message)
+        && areOptionalRenderRelevantMessagesEqual(prev.previousMessage, next.previousMessage)
+        && areOptionalRenderRelevantMessagesEqual(prev.nextMessage, next.nextMessage)
+        && prev.onMessageContentChange === next.onMessageContentChange
+        && prev.getAnimationHandlers === next.getAnimationHandlers
+        && prev.scrollToBottom === next.scrollToBottom
+        && prev.shouldAnimateUserMessage === next.shouldAnimateUserMessage
+        && prev.onUserAnimationConsumed === next.onUserAnimationConsumed;
 });
 
 UngroupedMessageRow.displayName = 'UngroupedMessageRow';
@@ -763,9 +799,9 @@ function areMessageListEntryPropsEqual(prevProps: MessageListEntryProps, nextPro
 
     if (prevEntry.kind === 'ungrouped' && nextEntry.kind === 'ungrouped') {
         return (
-            prevEntry.message === nextEntry.message
-            && prevEntry.previousMessage === nextEntry.previousMessage
-            && prevEntry.nextMessage === nextEntry.nextMessage
+            areRenderRelevantMessagesEqual(prevEntry.message, nextEntry.message)
+            && areOptionalRenderRelevantMessagesEqual(prevEntry.previousMessage, nextEntry.previousMessage)
+            && areOptionalRenderRelevantMessagesEqual(prevEntry.nextMessage, nextEntry.nextMessage)
         );
     }
 
@@ -775,6 +811,7 @@ function areMessageListEntryPropsEqual(prevProps: MessageListEntryProps, nextPro
 // Inner component that renders staged turn entries.
 const MessageListContent: React.FC<{
     entries: RenderEntry[];
+    trailingEntry?: RenderEntry;
     onMessageContentChange: (reason?: ContentChangeReason) => void;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     scrollToBottom?: (options?: { instant?: boolean; force?: boolean }) => void;
@@ -786,7 +823,7 @@ const MessageListContent: React.FC<{
     chatRenderMode: 'sorted' | 'live';
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
     onUserAnimationConsumed: (messageId: string) => void;
-}> = ({ entries, onMessageContentChange, getAnimationHandlers, scrollToBottom, stickyUserHeader, sessionIsWorking, defaultActivityExpanded, turnUiStates, onToggleTurnGroup, chatRenderMode, shouldAnimateUserMessage, onUserAnimationConsumed }) => {
+}> = ({ entries, trailingEntry, onMessageContentChange, getAnimationHandlers, scrollToBottom, stickyUserHeader, sessionIsWorking, defaultActivityExpanded, turnUiStates, onToggleTurnGroup, chatRenderMode, shouldAnimateUserMessage, onUserAnimationConsumed }) => {
     const renderEntry = React.useCallback((entry: RenderEntry) => {
         return (
             <MessageListEntry
@@ -808,7 +845,10 @@ const MessageListContent: React.FC<{
     }, [chatRenderMode, defaultActivityExpanded, getAnimationHandlers, onMessageContentChange, onToggleTurnGroup, onUserAnimationConsumed, scrollToBottom, sessionIsWorking, shouldAnimateUserMessage, stickyUserHeader, turnUiStates]);
 
     return (
-        <TurnList entries={entries} renderEntry={renderEntry} />
+        <>
+            <TurnList entries={entries} renderEntry={renderEntry} />
+            {trailingEntry ? renderEntry(trailingEntry) : null}
+        </>
     );
 };
 
@@ -1033,15 +1073,8 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     const { projection, staticTurns, streamingTurn } = useTurnRecords(displayMessages, {
         showTextJustificationActivity: chatRenderMode === 'sorted',
     });
-    const turns = React.useMemo(() => streamPerfMeasure('ui.message_list.turns_ms', () => {
-        if (!streamingTurn) {
-            return staticTurns;
-        }
-        return [...staticTurns, streamingTurn];
-    }), [staticTurns, streamingTurn]);
-
-    const renderEntries = React.useMemo<RenderEntry[]>(() => streamPerfMeasure('ui.message_list.render_entries_ms', () => {
-        const turnEntries = turns.map((turn) => ({
+    const staticRenderEntries = React.useMemo<RenderEntry[]>(() => streamPerfMeasure('ui.message_list.render_entries_ms', () => {
+        const turnEntries = staticTurns.map((turn) => ({
             kind: 'turn' as const,
             key: `turn:${turn.turnId}`,
             turn,
@@ -1079,21 +1112,49 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         });
 
         return orderedEntries;
-    }), [displayMessages, projection.lastTurnId, projection.ungroupedMessageIds, turns]);
+    }), [displayMessages, projection.lastTurnId, projection.ungroupedMessageIds, staticTurns]);
+
+    const trailingStreamingEntry = React.useMemo<RenderEntry | undefined>(() => {
+        if (streamingTurn) {
+            return {
+                kind: 'turn',
+                key: `turn:${streamingTurn.turnId}`,
+                turn: streamingTurn,
+                isLastTurn: streamingTurn.turnId === projection.lastTurnId,
+            } satisfies RenderEntry;
+        }
+
+        if (projection.ungroupedMessageIds.size === 0) {
+            return undefined;
+        }
+
+        const lastMessage = displayMessages[displayMessages.length - 1];
+        if (!lastMessage || !projection.ungroupedMessageIds.has(lastMessage.info.id)) {
+            return undefined;
+        }
+
+        return {
+            kind: 'ungrouped',
+            key: `msg:${lastMessage.info.id}`,
+            message: lastMessage,
+            previousMessage: displayMessages.length > 1 ? displayMessages[displayMessages.length - 2] : undefined,
+            nextMessage: undefined,
+        } satisfies RenderEntry;
+    }, [displayMessages, projection.lastTurnId, projection.ungroupedMessageIds, streamingTurn]);
 
     const staging = useStageTurns({
         sessionKey,
         turnStart,
-        totalTurns: renderEntries.length,
+        totalTurns: staticRenderEntries.length,
         disabled: disableStaging,
     });
 
     const stagedEntries = React.useMemo(() => {
         if (staging.stageStartIndex <= 0) {
-            return renderEntries;
+            return staticRenderEntries;
         }
-        return renderEntries.slice(staging.stageStartIndex);
-    }, [renderEntries, staging.stageStartIndex]);
+        return staticRenderEntries.slice(staging.stageStartIndex);
+    }, [staticRenderEntries, staging.stageStartIndex]);
 
     const currentUserOrder = React.useMemo(() => {
         return messages
@@ -1492,6 +1553,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                         <div className="relative w-full">
                         <MessageListContent
                             entries={stagedEntries}
+                            trailingEntry={trailingStreamingEntry}
                             onMessageContentChange={stableOnMessageContentChange}
                             getAnimationHandlers={stableGetAnimationHandlers}
                             scrollToBottom={stableScrollToBottom}

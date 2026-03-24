@@ -27,6 +27,7 @@ import type { TurnGroupingContext } from './lib/turns/types';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { FadeInOnReveal } from './message/FadeInOnReveal';
 import { streamPerfCount } from '@/stores/utils/streamDebug';
+import { areOptionalRenderRelevantMessagesEqual, areRenderRelevantMessageInfoEqual, areRenderRelevantPartsEqual } from './message/renderCompare';
 
 const ToolOutputDialog = React.lazy(() => import('./message/ToolOutputDialog'));
 
@@ -1092,6 +1093,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                             )}
 
                             <MessageBody
+                                sessionId={message.info.sessionID}
                                 messageId={message.info.id}
                                 parts={visibleParts}
                                 isUser={isUser}
@@ -1137,4 +1139,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     );
 };
 
-export default React.memo(ChatMessage);
+export default React.memo(ChatMessage, (prev, next) => {
+    return areRenderRelevantMessageInfoEqual(prev.message.info, next.message.info)
+        && areRenderRelevantPartsEqual(prev.message.parts, next.message.parts)
+        && areOptionalRenderRelevantMessagesEqual(prev.previousMessage, next.previousMessage)
+        && areOptionalRenderRelevantMessagesEqual(prev.nextMessage, next.nextMessage)
+        && prev.onContentChange === next.onContentChange
+        && prev.turnGroupingContext === next.turnGroupingContext
+        && prev.animateUserOnMount === next.animateUserOnMount
+        && prev.onUserAnimationConsumed === next.onUserAnimationConsumed;
+});
