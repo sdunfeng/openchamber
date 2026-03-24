@@ -19,11 +19,18 @@ import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { isDesktopLocalOriginActive } from '@/lib/desktop';
 import { triggerSessionStatusPoll } from '@/hooks/useServerSessionStatus';
 import { PermissionToastActions } from '@/components/chat/PermissionToastActions';
+import { createContentEventHandler } from '@/hooks/eventStream/contentLane';
 
 interface EventData {
   type: string;
   properties?: Record<string, unknown>;
 }
+
+const HOT_CONTENT_EVENT_TYPES = new Set([
+  'message.part.updated',
+  'message.part.delta',
+  'message.updated',
+]);
 
 const readStringProp = (obj: unknown, keys: string[]): string | null => {
   if (!obj || typeof obj !== 'object') return null;
@@ -516,6 +523,8 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
   }, []);
 
   const unsubscribeRef = React.useRef<(() => void) | null>(null);
+  const deferredSideEffectsRef = React.useRef<Array<() => void>>([]);
+  const deferredSideEffectsTimerRef = React.useRef<number | null>(null);
   const reconnectTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = React.useRef(0);
   const missingMessageHydrationRef = React.useRef<Set<string>>(new Set());
@@ -560,6 +569,36 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
     (sessionId: string, reason: string, limit?: number) => Promise<void>
   >(() => Promise.resolve());
   const scheduleReconnectRef = React.useRef<(hint?: string) => void>(() => {});
+
+  const scheduleSideEffect = React.useCallback((effect: () => void) => {
+    deferredSideEffectsRef.current.push(effect);
+    if (deferredSideEffectsTimerRef.current !== null) {
+      return;
+    }
+
+    deferredSideEffectsTimerRef.current = window.setTimeout(() => {
+      deferredSideEffectsTimerRef.current = null;
+      const queue = deferredSideEffectsRef.current.splice(0, deferredSideEffectsRef.current.length);
+      for (const task of queue) {
+        try {
+          task();
+        } catch (error) {
+          console.warn('[useEventStream] Deferred side effect failed:', error);
+        }
+      }
+    }, 0);
+  }, []);
+
+  React.useEffect(() => {
+    const deferredQueue = deferredSideEffectsRef.current;
+    return () => {
+      if (deferredSideEffectsTimerRef.current !== null) {
+        window.clearTimeout(deferredSideEffectsTimerRef.current);
+        deferredSideEffectsTimerRef.current = null;
+      }
+      deferredQueue.length = 0;
+    };
+  }, []);
 
   const writePartTypeHint = React.useCallback((key: string, type: string) => {
     const map = partTypeHintsByKeyRef.current;
@@ -836,6 +875,18 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
     useSessionStore.setState({ sessionStatus: next });
   }, []);
 
+  const markSessionBusyFromContentEvent = React.useCallback((sessionId: string, source: 'sse:message.part.updated' | 'sse:message.part.delta') => {
+    const currentStatus = useSessionStore.getState().sessionStatus?.get(sessionId);
+    const recentlyConfirmedIdle =
+      currentStatus?.type === 'idle' &&
+      typeof currentStatus.confirmedAt === 'number' &&
+      Date.now() - currentStatus.confirmedAt < 1200;
+
+    if ((!currentStatus || currentStatus.type === 'idle') && !recentlyConfirmedIdle) {
+      updateSessionStatus(sessionId, { type: 'busy' }, source);
+    }
+  }, [updateSessionStatus]);
+
   const updateSessionActivityPhase = React.useCallback((
     sessionId: string,
     phase: 'idle' | 'busy' | 'cooldown',
@@ -981,6 +1032,57 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
     }
   }, [refreshSessionActivityStatus]);
 
+  const handleContentEvent = React.useMemo(() => createContentEventHandler({
+    currentSessionId,
+    readStringProp,
+    readEventDirectory,
+    getMessageFromStore,
+    getLatestMessageFromStore,
+    addStreamingPart,
+    applyPartDelta,
+    completeStreamingMessage,
+    updateMessageInfo,
+    updateSessionCompaction,
+    trackMessage,
+    reportMessage,
+    writePartTypeHint,
+    emitGitRefreshHint,
+    requestPendingQuestionsRefresh,
+    markSessionBusyFromContentEvent,
+    requestSessionMetadataRefresh,
+    repairSessionDerivedState,
+    dispatchRuntimeNotification,
+    scheduleSideEffect,
+    currentSessionIdRef,
+    lastUserAgentSelectionRef,
+    missingMessageHydrationRef,
+    modeSwitchToastShownRef,
+    notifiedMessagesRef,
+    partTypeHintsByKeyRef,
+    pendingMessageStallTimersRef,
+    lastMessageEventBySessionRef,
+    serverNotificationEventSeenRef,
+    gitRefreshHintToolNames: GIT_REFRESH_HINT_TOOL_NAMES,
+    gitRefreshHintCompletedStates: GIT_REFRESH_HINT_COMPLETED_STATES,
+  }), [
+    currentSessionId,
+    addStreamingPart,
+    applyPartDelta,
+    completeStreamingMessage,
+    updateMessageInfo,
+    updateSessionCompaction,
+    trackMessage,
+    reportMessage,
+    writePartTypeHint,
+    emitGitRefreshHint,
+    requestPendingQuestionsRefresh,
+    markSessionBusyFromContentEvent,
+    requestSessionMetadataRefresh,
+    repairSessionDerivedState,
+    dispatchRuntimeNotification,
+    scheduleSideEffect,
+  ]);
+
   React.useEffect(() => {
     const nextSessionId = currentSessionId ?? null;
     const prevSessionId = previousSessionIdRef.current;
@@ -1013,9 +1115,11 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
       if (!event.properties) return;
 
       const props = event.properties as Record<string, unknown>;
-      const nonMetadataSessionEvents = new Set(['session.abort', 'session.error']);
+      const shouldProcessSessionMetadata = !HOT_CONTENT_EVENT_TYPES.has(event.type)
+        && event.type !== 'session.abort'
+        && event.type !== 'session.error';
 
-      if (!nonMetadataSessionEvents.has(event.type)) {
+      if (shouldProcessSessionMetadata) {
         const sessionPayload = (typeof props.session === 'object' && props.session !== null ? props.session : null) ||
                              (typeof props.sessionInfo === 'object' && props.sessionInfo !== null ? props.sessionInfo : null) as Record<string, unknown> | null;
 
@@ -1041,6 +1145,10 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
             }
           }
         }
+      }
+
+      if (handleContentEvent(event)) {
+        return;
       }
 
       switch (event.type) {
@@ -1351,16 +1459,7 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
           })();
 
           if (isStreamingPart) {
-            const currentStatus = useSessionStore.getState().sessionStatus?.get(sessionId);
-            const recentlyConfirmedIdle =
-              currentStatus?.type === 'idle' &&
-              typeof currentStatus.confirmedAt === 'number' &&
-              Date.now() - currentStatus.confirmedAt < 1200;
-            if (!currentStatus || currentStatus.type === 'idle') {
-              if (!recentlyConfirmedIdle) {
-                updateSessionStatus(sessionId, { type: 'busy' }, 'sse:message.part.updated');
-              }
-            }
+            markSessionBusyFromContentEvent(sessionId, 'sse:message.part.updated');
           }
         }
 
@@ -1437,16 +1536,7 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
         }
 
         if (roleInfo === 'assistant' && delta.length > 0) {
-          const currentStatus = useSessionStore.getState().sessionStatus?.get(sessionId);
-          const recentlyConfirmedIdle =
-            currentStatus?.type === 'idle' &&
-            typeof currentStatus.confirmedAt === 'number' &&
-            Date.now() - currentStatus.confirmedAt < 1200;
-          if (!currentStatus || currentStatus.type === 'idle') {
-            if (!recentlyConfirmedIdle) {
-              updateSessionStatus(sessionId, { type: 'busy' }, 'sse:message.part.delta');
-            }
-          }
+          markSessionBusyFromContentEvent(sessionId, 'sse:message.part.delta');
         }
 
         trackMessage(messageId, 'part_delta_received', { role: roleInfo, field });
@@ -2167,6 +2257,7 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
     requestSessionMetadataRefresh,
     updateSessionCompaction,
     applySessionMetadata,
+    handleContentEvent,
     trackMessage,
     reportMessage,
     requestPendingQuestionsRefresh,
@@ -2180,6 +2271,7 @@ export const useEventStream = (options?: { enabled?: boolean }) => {
     repairSessionDerivedState,
     dispatchRuntimeNotification,
     emitGitRefreshHint,
+    markSessionBusyFromContentEvent,
     writePartTypeHint,
   ]);
 

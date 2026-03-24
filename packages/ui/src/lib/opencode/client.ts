@@ -1346,12 +1346,15 @@ class OpencodeService {
       : typeof properties?.partId === 'string'
         ? properties.partId
         : null;
+    const field = typeof properties?.field === 'string'
+      ? properties.field
+      : null;
 
-    if (!messageId || !partId) {
+    if (!messageId || !partId || !field) {
       return null;
     }
 
-    return `${event.directory}:${messageId}:${partId}`;
+    return `${event.directory}:${messageId}:${partId}:${field}`;
   }
 
   private getGlobalSseUpdatedPartKey(event: RoutedOpencodeEvent): string | null {
@@ -1433,7 +1436,54 @@ class OpencodeService {
       return `message.part.updated:${partKey}`;
     }
 
+    if (eventType === 'message.part.delta') {
+      const deltaKey = this.getGlobalSseDeltaKey(event);
+      if (!deltaKey) {
+        return null;
+      }
+      return `message.part.delta:${deltaKey}`;
+    }
+
     return null;
+  }
+
+  private mergeGlobalSseEvent(existing: RoutedOpencodeEvent, incoming: RoutedOpencodeEvent): RoutedOpencodeEvent | null {
+    const existingPayload = existing.payload as unknown as Record<string, unknown>;
+    const incomingPayload = incoming.payload as unknown as Record<string, unknown>;
+    const existingType = typeof existingPayload.type === 'string' ? existingPayload.type : null;
+    const incomingType = typeof incomingPayload.type === 'string' ? incomingPayload.type : null;
+
+    if (existingType !== 'message.part.delta' || incomingType !== 'message.part.delta') {
+      return null;
+    }
+
+    const existingProps = typeof existingPayload.properties === 'object' && existingPayload.properties !== null
+      ? existingPayload.properties as Record<string, unknown>
+      : null;
+    const incomingProps = typeof incomingPayload.properties === 'object' && incomingPayload.properties !== null
+      ? incomingPayload.properties as Record<string, unknown>
+      : null;
+
+    if (!existingProps || !incomingProps) {
+      return null;
+    }
+
+    const existingDelta = typeof existingProps.delta === 'string' ? existingProps.delta : null;
+    const incomingDelta = typeof incomingProps.delta === 'string' ? incomingProps.delta : null;
+    if (existingDelta === null || incomingDelta === null) {
+      return null;
+    }
+
+    return {
+      ...incoming,
+      payload: {
+        ...incomingPayload,
+        properties: {
+          ...incomingProps,
+          delta: `${existingDelta}${incomingDelta}`,
+        },
+      },
+    } as RoutedOpencodeEvent;
   }
 
   private flushGlobalSseQueue = () => {
@@ -1496,6 +1546,13 @@ class OpencodeService {
     if (key) {
       const existingIndex = this.globalSseCoalesced.get(key);
       if (existingIndex !== undefined) {
+        const existingEvent = this.globalSseQueue[existingIndex];
+        const mergedEvent = existingEvent ? this.mergeGlobalSseEvent(existingEvent, event) : null;
+        if (mergedEvent) {
+          this.globalSseQueue[existingIndex] = mergedEvent;
+          return;
+        }
+
         this.globalSseQueue[existingIndex] = undefined;
         const updatedPartKey = this.getGlobalSseUpdatedPartKey(event);
         if (updatedPartKey) {
