@@ -1,9 +1,6 @@
 import React from 'react';
 import type { Part } from '@opencode-ai/sdk/v2';
-import { flushSync } from 'react-dom';
-import { elementScroll, observeElementOffset, observeElementRect, Virtualizer } from '@tanstack/react-virtual';
 import { useShallow } from 'zustand/react/shallow';
-import type { ReactVirtualizerOptions, VirtualItem } from '@tanstack/react-virtual';
 
 import ChatMessage from './ChatMessage';
 import { areOptionalRenderRelevantMessagesEqual, areRenderRelevantMessagesEqual } from './message/renderCompare';
@@ -18,7 +15,6 @@ import { useCurrentSessionActivity } from '@/hooks/useSessionActivity';
 import { filterSyntheticParts } from '@/lib/messages/synthetic';
 import type { ChatMessageEntry, TurnRecord, TurnGroupingContext } from './lib/turns/types';
 import { useTurnRecords } from './hooks/useTurnRecords';
-import { useStageTurns } from './lib/turns/stageTurns';
 import { applyRetryOverlay } from './lib/turns/applyRetryOverlay';
 import { useSessionStore } from '@/stores/useSessionStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -30,13 +26,6 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { StatusRow } from './StatusRow';
 import { streamPerfCount, streamPerfMeasure } from '@/stores/utils/streamDebug';
 
-const MESSAGE_VIRTUALIZE_THRESHOLD = 40;
-const MESSAGE_VIRTUAL_OVERSCAN_MOBILE = 2;
-const MESSAGE_VIRTUAL_OVERSCAN_DESKTOP = 4;
-const TURN_ESTIMATE_BASE_PX = 120;
-const TURN_ESTIMATE_PER_ASSISTANT_PX = 120;
-const TURN_ESTIMATE_MAX_PX = 1400;
-
 const useStableEvent = <TArgs extends unknown[], TResult>(handler: (...args: TArgs) => TResult) => {
     const handlerRef = React.useRef(handler);
     React.useEffect(() => {
@@ -44,49 +33,6 @@ const useStableEvent = <TArgs extends unknown[], TResult>(handler: (...args: TAr
     }, [handler]);
 
     return React.useCallback((...args: TArgs) => handlerRef.current(...args), []);
-};
-
-type MessageListVirtualizerOptions<TItemElement extends Element> = Omit<
-    ReactVirtualizerOptions<HTMLElement, TItemElement>,
-    'scrollToFn' | 'observeElementRect' | 'observeElementOffset'
->
-
-const useMessageListVirtualizer = <TItemElement extends Element>(
-    options: MessageListVirtualizerOptions<TItemElement>,
-): Virtualizer<HTMLElement, TItemElement> => {
-    const [, forceRender] = React.useReducer(() => ({}), {});
-    const { useFlushSync = true, onChange, ...baseOptions } = options;
-
-    const handleChange = React.useCallback((instance: Virtualizer<HTMLElement, TItemElement>, sync: boolean) => {
-        if (useFlushSync && sync) {
-            flushSync(forceRender);
-        } else {
-            forceRender();
-        }
-
-        onChange?.(instance, sync);
-    }, [onChange, useFlushSync]);
-
-    const [virtualizer] = React.useState(() => new Virtualizer<HTMLElement, TItemElement>({
-        ...baseOptions,
-        onChange: handleChange,
-        observeElementRect,
-        observeElementOffset,
-        scrollToFn: elementScroll,
-    }));
-
-    virtualizer.setOptions({
-        ...baseOptions,
-        onChange: handleChange,
-        observeElementRect,
-        observeElementOffset,
-        scrollToFn: elementScroll,
-    });
-
-    React.useLayoutEffect(() => virtualizer._didMount(), [virtualizer]);
-    React.useLayoutEffect(() => virtualizer._willUpdate(), [virtualizer]);
-
-    return virtualizer;
 };
 
 const USER_SHELL_MARKER = 'The following tool was executed by the user';
@@ -911,7 +857,7 @@ StreamingTailContent.displayName = 'StreamingTailContent';
 const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({ 
     sessionKey,
     turnStart,
-    disableStaging,
+    disableStaging: _disableStaging,
     messages,
     permissions,
     questions,
@@ -924,6 +870,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     scrollRef,
 }, ref) => {
     streamPerfCount('ui.message_list.render');
+    void _disableStaging;
     const { isMobile } = useDeviceInfo();
     const { isWorking: sessionIsWorking } = useCurrentSessionActivity();
     const { working } = useAssistantStatus();
@@ -1255,21 +1202,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         } satisfies RenderEntry;
     }, [displayMessages, projection.lastTurnId, projection.ungroupedMessageIds, streamingTurn]);
 
-    const staging = useStageTurns({
-        sessionKey,
-        turnStart,
-        totalTurns: staticRenderEntries.length,
-        disabled: disableStaging,
-    });
-
-    const stagedEntries = React.useMemo(() => {
-        if (staging.stageStartIndex <= 0) {
-            return staticRenderEntries;
-        }
-        return staticRenderEntries.slice(staging.stageStartIndex);
-    }, [staticRenderEntries, staging.stageStartIndex]);
-
-    const historyEntries = stagedEntries;
+    const historyEntries = staticRenderEntries;
     const allEntries = React.useMemo(() => {
         return trailingStreamingEntry ? [...historyEntries, trailingStreamingEntry] : historyEntries;
     }, [historyEntries, trailingStreamingEntry]);
@@ -1321,68 +1254,6 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         // Animation plays once via ToolRevealOnMount; no cleanup needed.
         // The ref-based animatedIds set is reset on session switch.
     }, []);
-
-    const shouldVirtualize = Boolean(resolveScrollContainer()) && historyEntries.length >= MESSAGE_VIRTUALIZE_THRESHOLD;
-
-    const estimateEntrySize = React.useCallback(
-        (index: number): number => {
-            const entry = historyEntries[index];
-            if (!entry) {
-                return 220;
-            }
-            if (entry.kind === 'turn') {
-                const assistantCount = entry.turn.assistantMessages.length;
-                return Math.min(
-                    TURN_ESTIMATE_MAX_PX,
-                    TURN_ESTIMATE_BASE_PX + assistantCount * TURN_ESTIMATE_PER_ASSISTANT_PX,
-                );
-            }
-            const role = resolveMessageRole(entry.message);
-            return role === 'user' ? 100 : 220;
-        },
-        [historyEntries]
-    );
-
-    const virtualizer = useMessageListVirtualizer<Element>({
-        count: historyEntries.length,
-        getScrollElement: resolveScrollContainer,
-        estimateSize: estimateEntrySize,
-        overscan: isMobile ? MESSAGE_VIRTUAL_OVERSCAN_MOBILE : MESSAGE_VIRTUAL_OVERSCAN_DESKTOP,
-        getItemKey: (index: number) => historyEntries[index]?.key ?? index,
-        enabled: shouldVirtualize,
-        useFlushSync: false,
-    });
-
-    const isVirtualRowInRange = React.useCallback(
-        (row: VirtualItem) => row.index >= 0 && row.index < historyEntries.length,
-        [historyEntries.length],
-    );
-
-    const virtualRows = shouldVirtualize ? virtualizer.getVirtualItems().filter(isVirtualRowInRange) : [];
-    const lastNonEmptyVirtualRowsRef = React.useRef<VirtualItem[]>([]);
-    if (shouldVirtualize && virtualRows.length > 0) {
-        lastNonEmptyVirtualRowsRef.current = virtualRows;
-    } else if (!shouldVirtualize && lastNonEmptyVirtualRowsRef.current.length > 0) {
-        lastNonEmptyVirtualRowsRef.current = [];
-    }
-
-    const fallbackVirtualRows = shouldVirtualize
-        ? lastNonEmptyVirtualRowsRef.current.filter(isVirtualRowInRange)
-        : [];
-
-    const effectiveVirtualRows = shouldVirtualize
-        ? (virtualRows.length > 0 ? virtualRows : fallbackVirtualRows)
-        : [];
-
-    const renderVirtualized = shouldVirtualize && effectiveVirtualRows.length > 0;
-
-    const scrollVirtualizerToIndex = React.useCallback((index: number, behavior: ScrollBehavior = 'auto') => {
-        if (!virtualizer) {
-            return;
-        }
-        const normalizedBehavior: 'auto' | 'smooth' = behavior === 'instant' ? 'auto' : behavior;
-        virtualizer.scrollToIndex(index, { align: 'start', behavior: normalizedBehavior });
-    }, [virtualizer]);
 
     const messageIndexMap = React.useMemo(() => {
         const indexMap = new Map<string, number>();
@@ -1437,7 +1308,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         return true;
     }, [findMessageElement, resolveScrollContainer]);
 
-    React.useLayoutEffect(() => {
+    React.useEffect(() => {
         if (!ref) {
             return;
         }
@@ -1451,22 +1322,8 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                 }
 
                 const targetIsTail = trailingStreamingEntry !== undefined && index >= historyEntries.length;
-
-                if (shouldVirtualize && !targetIsTail) {
-                    scrollVirtualizerToIndex(index, behavior === 'instant' ? 'auto' : behavior);
-                    if (typeof window !== 'undefined') {
-                        window.requestAnimationFrame(() => {
-                            const container = resolveScrollContainer();
-                            if (!container) {
-                                return;
-                            }
-                            const turnElement = container.querySelector<HTMLElement>(`[data-turn-id="${turnId}"]`);
-                            if (turnElement) {
-                                turnElement.scrollIntoView({ behavior, block: 'start' });
-                            }
-                        });
-                    }
-                    return true;
+                if (targetIsTail) {
+                    return false;
                 }
 
                 const container = resolveScrollContainer();
@@ -1489,26 +1346,8 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                 }
 
                 const targetIsTail = trailingStreamingEntry !== undefined && index >= historyEntries.length;
-
-                if (shouldVirtualize && !targetIsTail) {
-                    scrollVirtualizerToIndex(index, behavior === 'instant' ? 'auto' : behavior);
-                    if (scrollMessageElementIntoView(messageId, behavior)) {
-                        return true;
-                    }
-                    if (typeof window !== 'undefined') {
-                        let attempts = 0;
-                        const retry = () => {
-                            attempts += 1;
-                            if (scrollMessageElementIntoView(messageId, behavior)) {
-                                return;
-                            }
-                            if (attempts < 3) {
-                                window.requestAnimationFrame(retry);
-                            }
-                        };
-                        window.requestAnimationFrame(retry);
-                    }
-                    return true;
+                if (targetIsTail) {
+                    return false;
                 }
 
                 return scrollMessageElementIntoView(messageId, behavior);
@@ -1544,13 +1383,8 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                     return false;
                 }
 
-                const index = messageIndexMap.get(anchor.messageId);
-                if (index === undefined) {
+                if (!messageIndexMap.has(anchor.messageId)) {
                     return false;
-                }
-
-                if (shouldVirtualize) {
-                    scrollVirtualizerToIndex(index, 'auto');
                 }
 
                 const applyAnchor = (): boolean => {
@@ -1601,9 +1435,9 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         return () => {
             objectRef.current = null;
         };
-    }, [findMessageElement, historyEntries.length, messageIndexMap, scrollMessageElementIntoView, resolveScrollContainer, scrollVirtualizerToIndex, shouldVirtualize, trailingStreamingEntry, turnIndexMap, ref]);
+    }, [findMessageElement, historyEntries.length, messageIndexMap, scrollMessageElementIntoView, resolveScrollContainer, trailingStreamingEntry, turnIndexMap, ref]);
 
-    const disableFadeIn = isLoadingOlder || (renderVirtualized && virtualizer.isScrolling);
+    const disableFadeIn = isLoadingOlder;
 
     return (
         <div>
@@ -1625,76 +1459,8 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                     </div>
                 )}
 
-                {staging.isStaging ? (
-                    <div className="flex justify-center py-1">
-                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                            Revealing history…
-                        </span>
-                    </div>
-                ) : null}
-
                 <FadeInDisabledProvider disabled={disableFadeIn}>
-                    {renderVirtualized ? (
-                        <>
-                            <div
-                                className="relative w-full"
-                                style={{ height: `${virtualizer.getTotalSize()}px` }}
-                            >
-                                {effectiveVirtualRows.map((virtualRow: VirtualItem) => {
-                                    const entry = historyEntries[virtualRow.index];
-                                    if (!entry) {
-                                        return null;
-                                    }
-
-                                    return (
-                                        <div
-                                            key={entry.key}
-                                            data-index={virtualRow.index}
-                                            ref={virtualizer.measureElement}
-                                            className="absolute left-0 top-0 w-full [overflow-anchor:none]"
-                                            style={{
-                                                transform: `translateY(${virtualRow.start}px)`,
-                                                contentVisibility: 'auto',
-                                                containIntrinsicSize: 'auto 520px',
-                                            }}
-                                        >
-                                            <MessageListEntry
-                                                entry={entry}
-                                                onMessageContentChange={stableOnMessageContentChange}
-                                                getAnimationHandlers={stableGetAnimationHandlers}
-                                                scrollToBottom={stableScrollToBottom}
-                                                stickyUserHeader={false}
-                                                sessionIsWorking={sessionIsWorking}
-                                                defaultActivityExpanded={defaultActivityExpanded}
-                                                turnUiStates={turnUiStates}
-                                                onToggleTurnGroup={toggleTurnGroup}
-                                                chatRenderMode={chatRenderMode}
-                                                shouldAnimateUserMessage={shouldAnimateUserMessage}
-                                                onUserAnimationConsumed={onUserAnimationConsumed}
-                                            />
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                            {trailingStreamingEntry ? (
-                                <StreamingTailContent
-                                    entry={trailingStreamingEntry}
-                                    onMessageContentChange={stableOnMessageContentChange}
-                                    getAnimationHandlers={stableGetAnimationHandlers}
-                                    scrollToBottom={stableScrollToBottom}
-                                    stickyUserHeader={stickyUserHeader}
-                                    sessionIsWorking={sessionIsWorking}
-                                    defaultActivityExpanded={defaultActivityExpanded}
-                                    turnUiStates={turnUiStates}
-                                    onToggleTurnGroup={toggleTurnGroup}
-                                    chatRenderMode={chatRenderMode}
-                                    shouldAnimateUserMessage={shouldAnimateUserMessage}
-                                    onUserAnimationConsumed={onUserAnimationConsumed}
-                                />
-                            ) : null}
-                        </>
-                    ) : (
-                        <div className="relative w-full">
+                    <div className="relative w-full">
                         <MessageListContent
                             entries={historyEntries}
                             onMessageContentChange={stableOnMessageContentChange}
@@ -1725,8 +1491,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                                 onUserAnimationConsumed={onUserAnimationConsumed}
                             />
                         ) : null}
-                        </div>
-                    )}
+                    </div>
                 </FadeInDisabledProvider>
 
                 {(questions.length > 0 || permissions.length > 0) && (

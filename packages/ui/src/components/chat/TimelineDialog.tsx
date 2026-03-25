@@ -13,6 +13,8 @@ import { RiLoader4Line, RiSearchLine, RiTimeLine, RiGitBranchLine, RiArrowGoBack
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Part } from '@opencode-ai/sdk/v2';
 
+const EMPTY_MESSAGES: Array<{ info: { id: string; role: string; time: { created: number } }; parts: Part[] }> = [];
+
 interface TimelineDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -46,7 +48,7 @@ export const TimelineDialog: React.FC<TimelineDialogProps> = ({
 }) => {
     const currentSessionId = useSessionStore((state) => state.currentSessionId);
     const messages = useMessageStore((state) =>
-        currentSessionId ? state.messages.get(currentSessionId) || [] : []
+        currentSessionId ? state.messages.get(currentSessionId) || EMPTY_MESSAGES : EMPTY_MESSAGES
     );
     const revertToMessage = useSessionStore((state) => state.revertToMessage);
     const forkFromMessage = useSessionStore((state) => state.forkFromMessage);

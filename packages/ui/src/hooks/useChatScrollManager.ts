@@ -11,8 +11,6 @@ import {
 
 import { useScrollEngine } from './useScrollEngine';
 
-const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
-
 export type ContentChangeReason = 'text' | 'structural' | 'permission';
 
 interface ChatMessageRecord {
@@ -412,7 +410,7 @@ export const useChatScrollManager = ({
     }, [handleScrollEvent, handleWheelIntent, scrollEngine, updatePinnedState]);
 
     // Session switch - always start pinned at bottom
-    useIsomorphicLayoutEffect(() => {
+    React.useEffect(() => {
         if (!currentSessionId || currentSessionId === lastSessionIdRef.current) {
             return;
         }
@@ -534,12 +532,17 @@ export const useChatScrollManager = ({
 
         const container = scrollRef.current;
         if (!container) {
-            onActiveTurnChange(null);
             return;
         }
 
+        let lastActiveTurnId: string | null = null;
+
         const spy = createScrollSpy({
             onActive: (turnId) => {
+                if (turnId === lastActiveTurnId) {
+                    return;
+                }
+                lastActiveTurnId = turnId;
                 onActiveTurnChange(turnId);
             },
         });
@@ -626,7 +629,6 @@ export const useChatScrollManager = ({
             container.removeEventListener('scroll', handleScroll);
             mutationObserver.disconnect();
             spy.destroy();
-            onActiveTurnChange(null);
         };
     }, [currentSessionId, onActiveTurnChange, scrollRef, sessionMessages.length]);
 

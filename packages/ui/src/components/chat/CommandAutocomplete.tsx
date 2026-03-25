@@ -1,5 +1,5 @@
 import React from 'react';
-import { RiCommandLine, RiFileLine, RiFlashlightLine, RiRefreshLine, RiScissorsLine, RiTerminalBoxLine, RiArrowGoBackLine, RiArrowGoForwardLine, RiTimeLine } from '@remixicon/react';
+import { RiCommandLine, RiFileLine, RiFlashlightLine, RiRefreshLine, RiScissorsLine, RiTerminalBoxLine, RiArrowGoBackLine, RiArrowGoForwardLine } from '@remixicon/react';
 import { cn, fuzzyMatch } from '@/lib/utils';
 import { useSessionStore } from '@/stores/useSessionStore';
 import { useCommandsStore } from '@/stores/useCommandsStore';
@@ -114,7 +114,6 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             ? [
                 { name: 'undo', description: 'Undo the last message', isBuiltIn: true },
                 { name: 'redo', description: 'Redo previously undone messages', isBuiltIn: true },
-                { name: 'timeline', description: 'Jump to a specific message', isBuiltIn: true },
               ]
             : []
           ),
@@ -158,7 +157,6 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             ? [
                 { name: 'undo', description: 'Undo the last message', isBuiltIn: true },
                 { name: 'redo', description: 'Redo previously undone messages', isBuiltIn: true },
-                { name: 'timeline', description: 'Jump to a specific message', isBuiltIn: true },
               ]
             : []
           ),
@@ -233,8 +231,6 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
         return <RiArrowGoBackLine className="h-3.5 w-3.5 text-orange-500" />;
       case 'redo':
         return <RiArrowGoForwardLine className="h-3.5 w-3.5 text-orange-500" />;
-      case 'timeline':
-        return <RiTimeLine className="h-3.5 w-3.5 text-blue-500" />;
       case 'compact':
         return <RiScissorsLine className="h-3.5 w-3.5 text-purple-500" />;
       case 'test':

@@ -24,7 +24,9 @@ export const useTurnRecords = (
 
     React.useEffect(() => {
         previousProjectionRef.current = null;
-    }, [options.showTextJustificationActivity]);
+        staticTurnsRef.current = [];
+        streamingTurnRef.current = undefined;
+    }, [messages, options.showTextJustificationActivity]);
 
     const projection = React.useMemo(() => {
         return streamPerfMeasure('ui.turns.projection_ms', () => {

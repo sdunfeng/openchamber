@@ -17,7 +17,6 @@ import { useChatTurnNavigation } from './hooks/useChatTurnNavigation';
 import { useDeviceInfo } from '@/lib/device';
 import { Button } from '@/components/ui/button';
 import { OverlayScrollbar } from '@/components/ui/OverlayScrollbar';
-import { TimelineDialog } from './TimelineDialog';
 import type { PermissionRequest } from '@/types/permission';
 import type { QuestionRequest } from '@/types/question';
 import { cn } from '@/lib/utils';
@@ -100,8 +99,6 @@ export const ChatContainer: React.FC = () => {
     );
 
     const {
-        isTimelineDialogOpen,
-        setTimelineDialogOpen,
         isExpandedInput,
         stickyUserHeader,
         chatRenderMode,
@@ -219,13 +216,15 @@ export const ChatContainer: React.FC = () => {
     }, [sessionPermissions, sessionQuestions]);
 
     const activeTurnChangeRef = React.useRef<(turnId: string | null) => void>(() => {});
+    const handleActiveTurnChange = React.useCallback((turnId: string | null) => {
+        activeTurnChangeRef.current(turnId);
+    }, []);
 
     const {
         scrollRef,
         handleMessageContentChange,
         getAnimationHandlers,
         scrollToBottom,
-        releasePinnedScroll,
         isPinned,
         isOverflowing,
         isProgrammaticFollowActive,
@@ -240,9 +239,7 @@ export const ChatContainer: React.FC = () => {
         chatRenderMode,
         messageStreamStates,
         sessionPermissions: sessionBlockingCards,
-        onActiveTurnChange: (turnId) => {
-            activeTurnChangeRef.current(turnId);
-        },
+        onActiveTurnChange: handleActiveTurnChange,
     });
 
     const timelineController = useChatTimelineController({
@@ -569,20 +566,6 @@ export const ChatContainer: React.FC = () => {
                 )}
                 <ChatInput scrollToBottom={scrollToBottom} />
             </div>
-
-            <TimelineDialog
-                open={isTimelineDialogOpen}
-                onOpenChange={setTimelineDialogOpen}
-                onScrollToMessage={(messageId) => {
-                    releasePinnedScroll();
-                    return navigation.scrollToMessageId(messageId, { behavior: 'smooth', updateHash: false });
-                }}
-                onScrollByTurnOffset={(offset) => {
-                    releasePinnedScroll();
-                    void navigation.scrollByTurnOffset(offset);
-                }}
-                onResumeToLatest={navigation.resumeToLatest}
-            />
         </div>
     );
 };

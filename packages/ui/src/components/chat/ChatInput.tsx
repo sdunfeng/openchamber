@@ -339,7 +339,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onOpenSettings, scrollToBo
     const { currentProviderId, currentModelId, currentVariant, currentAgentName, setAgent, getVisibleAgents } = useConfigStore();
     const agents = getVisibleAgents();
     const primaryAgents = React.useMemo(() => agents.filter((agent) => agent.mode === 'primary'), [agents]);
-    const { isMobile, inputBarOffset, isKeyboardOpen, setTimelineDialogOpen, cornerRadius, persistChatDraft, inputSpellcheckEnabled, isExpandedInput, setExpandedInput } = useUIStore();
+    const { isMobile, inputBarOffset, isKeyboardOpen, cornerRadius, persistChatDraft, inputSpellcheckEnabled, isExpandedInput, setExpandedInput } = useUIStore();
     const { working } = useAssistantStatus();
     const { git: runtimeGit } = useRuntimeAPIs();
     const { currentTheme } = useThemeSystem();
@@ -1049,12 +1049,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onOpenSettings, scrollToBo
                 await useSessionStore.getState().handleSlashRedo(currentSessionId);
                 // Don't clear message - pendingInputText will populate it
                 scrollToBottom?.({ instant: true, force: true });
-                return; // Don't send to assistant
-            }
-            // NEW: /timeline - open timeline dialog
-            else if (commandName === 'timeline' && currentSessionId) {
-                setTimelineDialogOpen(true);
-                setMessage('');
                 return; // Don't send to assistant
             }
         }

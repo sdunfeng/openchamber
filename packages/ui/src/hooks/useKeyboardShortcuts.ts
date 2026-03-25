@@ -108,13 +108,6 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
-      if (eventMatchesShortcut(e, combo('open_timeline'))) {
-        e.preventDefault();
-        const { isTimelineDialogOpen, setTimelineDialogOpen } = useUIStore.getState();
-        setTimelineDialogOpen(!isTimelineDialogOpen);
-        return;
-      }
-
       if (eventMatchesShortcut(e, combo('open_settings'))) {
         e.preventDefault();
         const { isSettingsDialogOpen } = useUIStore.getState();
