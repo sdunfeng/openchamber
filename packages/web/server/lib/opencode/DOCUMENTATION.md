@@ -7,6 +7,12 @@ This module provides OpenCode server integration utilities for the web server ru
 - `packages/web/server/lib/opencode/index.js`: public entrypoint (currently baseline placeholder).
 - `packages/web/server/lib/opencode/auth.js`: provider authentication file operations.
 - `packages/web/server/lib/opencode/routes.js`: OpenCode/provider settings and auth-related route registration.
+- `packages/web/server/lib/opencode/lifecycle.js`: OpenCode process lifecycle runtime (startup, restart, readiness, health monitoring).
+- `packages/web/server/lib/opencode/env-runtime.js`: OpenCode CLI/binary resolution and shell environment runtime.
+- `packages/web/server/lib/opencode/network-runtime.js`: OpenCode URL construction, health-probe readiness checks, and API prefix runtime.
+- `packages/web/server/lib/opencode/proxy.js`: OpenCode API/SSE forwarding and readiness-gate route registration.
+- `packages/web/server/lib/opencode/session-runtime.js`: session status/attention/activity runtime for OpenCode SSE events.
+- `packages/web/server/lib/opencode/watcher.js`: global SSE watcher runtime for push/session event fanout.
 - `packages/web/server/lib/opencode/shared.js`: shared utilities for config, markdown, skills, and git helpers.
 - `packages/web/server/lib/opencode/ui-auth.js`: UI session authentication with rate limiting.
 
@@ -54,6 +60,74 @@ This module provides OpenCode server integration utilities for the web server ru
   - `DELETE /api/provider/:providerId/auth`
 - Owns lazy auth library loading for provider auth checks/removal.
 - Keeps route behavior independent from composition root; `index.js` now supplies dependencies only.
+
+## Public exports (session-runtime.js)
+- `createSessionRuntime({ writeSseEvent, getNotificationClients })`: creates runtime-owned state machine and APIs for session status.
+- Returned API:
+  - `processOpenCodeSsePayload(payload)`
+  - `getSessionActivitySnapshot()`
+  - `getSessionStateSnapshot()`
+  - `getSessionAttentionSnapshot()`
+  - `getSessionState(sessionId)`
+  - `getSessionAttentionState(sessionId)`
+  - `markSessionViewed(sessionId, clientId)`
+  - `markSessionUnviewed(sessionId, clientId)`
+  - `markUserMessageSent(sessionId)`
+  - `resetAllSessionActivityToIdle()`
+  - `dispose()`
+
+## Public exports (lifecycle.js)
+- `createOpenCodeLifecycleRuntime(dependencies)`: creates lifecycle runtime for managed/external OpenCode process orchestration.
+- Returned API:
+  - `startOpenCode()`
+  - `restartOpenCode()`
+  - `waitForOpenCodeReady(timeoutMs?, intervalMs?)`
+  - `waitForAgentPresence(agentName, timeoutMs?, intervalMs?)`
+  - `refreshOpenCodeAfterConfigChange(reason, options?)`
+  - `bootstrapOpenCodeAtStartup()`
+  - `startHealthMonitoring(healthCheckIntervalMs)`
+  - `killProcessOnPort(port)`
+
+## Public exports (env-runtime.js)
+- `createOpenCodeEnvRuntime(dependencies)`: creates runtime that owns OpenCode CLI environment and binary discovery state.
+- Returned API:
+  - `applyLoginShellEnvSnapshot()`
+  - `getLoginShellEnvSnapshot()`
+  - `ensureOpencodeCliEnv()`
+  - `applyOpencodeBinaryFromSettings()`
+  - `resolveOpencodeCliPath()`
+  - `resolveGitBinaryForSpawn()`
+  - `resolveWslExecutablePath()`
+  - `buildWslExecArgs(execArgs, distroOverride?)`
+  - `opencodeShimInterpreter(opencodePath)`
+  - `isExecutable(filePath)`
+  - `searchPathFor(binaryName)`
+  - `clearResolvedOpenCodeBinary()`
+
+## Public exports (network-runtime.js)
+- `createOpenCodeNetworkRuntime(dependencies)`: creates runtime for OpenCode network and URL concerns.
+- Returned API:
+  - `waitForReady(url, timeoutMs?)`
+  - `normalizeApiPrefix(prefix)`
+  - `setDetectedOpenCodeApiPrefix()`
+  - `buildOpenCodeUrl(path, prefixOverride?)`
+  - `ensureOpenCodeApiPrefix()`
+  - `scheduleOpenCodeApiDetection()`
+
+## Public exports (proxy.js)
+- `registerOpenCodeProxy(app, dependencies)`: registers OpenCode proxy routes and middleware.
+- Owns:
+  - SSE forwarders: `GET /api/global/event`, `GET /api/event`
+  - Session message forwarder: `POST /api/session/:sessionId/message`
+  - Generic `/api/*` forwarding with hop-by-hop header filtering
+  - Windows `/session` merge fallback path behavior
+  - OpenCode readiness gate for proxied `/api` requests
+
+## Public exports (watcher.js)
+- `createOpenCodeWatcherRuntime(dependencies)`: creates global event watcher runtime.
+- Returned API:
+  - `start()`
+  - `stop()`
 
 ## Storage and configuration
 - Provider auth: `~/.local/share/opencode/auth.json`.
