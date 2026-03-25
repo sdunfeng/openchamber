@@ -1081,6 +1081,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     }), [activeRetryMessage, activeRetryConfirmedAt, activeRetrySessionId, baseDisplayMessages, fallbackRetryTimestamp]);
 
     const { projection, staticTurns, streamingTurn } = useTurnRecords(displayMessages, {
+        sessionKey,
         showTextJustificationActivity: chatRenderMode === 'sorted',
     });
     const staticRenderEntries = React.useMemo<RenderEntry[]>(() => streamPerfMeasure('ui.message_list.render_entries_ms', () => {
@@ -1201,6 +1202,10 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
             nextMessage: undefined,
         } satisfies RenderEntry;
     }, [displayMessages, projection.lastTurnId, projection.ungroupedMessageIds, streamingTurn]);
+
+    if (trailingStreamingEntry) {
+        streamPerfCount('ui.message_list.render.streaming');
+    }
 
     const historyEntries = staticRenderEntries;
     const allEntries = React.useMemo(() => {

@@ -146,6 +146,15 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     const sessionState = useSessionStore(
         useShallow((state) => ({
             lifecyclePhase: state.messageStreamStates.get(message.info.id)?.phase ?? null,
+            hasActiveStreamInSession: (() => {
+                const sessionId =
+                    (message.info as { sessionID?: string }).sessionID ??
+                    state.currentSessionId ??
+                    null;
+                if (!sessionId) return false;
+                const streamingMessageId = state.streamingMessageIds.get(sessionId) ?? null;
+                return typeof streamingMessageId === 'string' && streamingMessageId.length > 0;
+            })(),
             isStreamingMessage: (() => {
                 const sessionId =
                     (message.info as { sessionID?: string }).sessionID ??
@@ -164,6 +173,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
 
     const {
         lifecyclePhase,
+        hasActiveStreamInSession,
         isStreamingMessage,
         currentSessionId,
         getAgentModelForSession,
@@ -175,6 +185,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     streamPerfCount('ui.chat_message.render');
     if (isStreamingMessage) {
         streamPerfCount('ui.chat_message.render.streaming');
+    } else if (hasActiveStreamInSession) {
+        streamPerfCount('ui.chat_message.render.static_during_stream');
     }
 
     const providers = useConfigStore((state) => state.providers);

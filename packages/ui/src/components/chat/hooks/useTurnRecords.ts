@@ -5,6 +5,7 @@ import type { ChatMessageEntry, TurnProjectionResult, TurnRecord } from '../lib/
 import { streamPerfMeasure } from '@/stores/utils/streamDebug';
 
 interface UseTurnRecordsOptions {
+    sessionKey?: string;
     showTextJustificationActivity: boolean;
 }
 
@@ -26,7 +27,7 @@ export const useTurnRecords = (
         previousProjectionRef.current = null;
         staticTurnsRef.current = [];
         streamingTurnRef.current = undefined;
-    }, [messages, options.showTextJustificationActivity]);
+    }, [options.sessionKey, options.showTextJustificationActivity]);
 
     const projection = React.useMemo(() => {
         return streamPerfMeasure('ui.turns.projection_ms', () => {

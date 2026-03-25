@@ -106,6 +106,19 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ onClose }) => {
   const totalGitHubRequests = useGitHubPrStatusStore((state) => state.totalRequestCount);
   const [streamSnapshot, setStreamSnapshot] = React.useState<StreamPerfSnapshot>(() => getStreamPerfSnapshot());
   const [vscodeStreamSnapshot, setVsCodeStreamSnapshot] = React.useState<StreamPerfSnapshot>(() => getVsCodeStreamPerfSnapshot());
+  const streamMetricCounts = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    streamSnapshot.entries.forEach((entry) => {
+      counts.set(entry.metric, entry.count);
+    });
+    return {
+      messageListRender: counts.get('ui.message_list.render') ?? 0,
+      messageListRenderStreaming: counts.get('ui.message_list.render.streaming') ?? 0,
+      chatMessageRender: counts.get('ui.chat_message.render') ?? 0,
+      chatMessageRenderStreaming: counts.get('ui.chat_message.render.streaming') ?? 0,
+      chatMessageRenderStaticDuringStream: counts.get('ui.chat_message.render.static_during_stream') ?? 0,
+    };
+  }, [streamSnapshot.entries]);
 
   React.useEffect(() => {
     const refresh = () => {
@@ -328,6 +341,11 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ onClose }) => {
           <div className="grid grid-cols-2 gap-2">
             <MetricCard label="UI Metrics" value={streamSnapshot.entries.length} />
             <MetricCard label="VS Code Metrics" value={vscodeStreamSnapshot.entries.length} />
+            <MetricCard label="MsgList Renders" value={streamMetricCounts.messageListRender} />
+            <MetricCard label="MsgList Stream Renders" value={streamMetricCounts.messageListRenderStreaming} />
+            <MetricCard label="ChatMessage Renders" value={streamMetricCounts.chatMessageRender} />
+            <MetricCard label="ChatMessage Stream Renders" value={streamMetricCounts.chatMessageRenderStreaming} />
+            <MetricCard label="ChatMessage Static During Stream" value={streamMetricCounts.chatMessageRenderStaticDuringStream} />
           </div>
 
           <PerfSection
