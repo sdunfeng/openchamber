@@ -41,19 +41,31 @@ import { createFsSearchRuntime as createFsSearchRuntimeFactory } from './lib/fs/
 import { createOpenCodeLifecycleRuntime } from './lib/opencode/lifecycle.js';
 import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
+import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtime.js';
 import { createProjectDirectoryRuntime } from './lib/opencode/project-directory-runtime.js';
 import { registerConfigEntityRoutes } from './lib/opencode/config-entity-routes.js';
+import { parseServeCliOptions } from './lib/opencode/cli-options.js';
+import {
+  registerAuthAndAccessRoutes,
+  registerServerStatusRoutes,
+  registerSettingsUtilityRoutes,
+} from './lib/opencode/core-routes.js';
+import { registerOpenChamberRoutes } from './lib/opencode/openchamber-routes.js';
 import { registerProjectIconRoutes } from './lib/opencode/project-icon-routes.js';
+import { createServerUtilsRuntime } from './lib/opencode/server-utils-runtime.js';
+import { createStaticRoutesRuntime } from './lib/opencode/static-routes-runtime.js';
 import { registerSkillRoutes } from './lib/opencode/skill-routes.js';
-import { registerOpenCodeProxy } from './lib/opencode/proxy.js';
 import { registerOpenCodeRoutes } from './lib/opencode/routes.js';
 import { createSettingsRuntime } from './lib/opencode/settings-runtime.js';
 import { createSessionRuntime } from './lib/opencode/session-runtime.js';
 import { createOpenCodeWatcherRuntime } from './lib/opencode/watcher.js';
+import { createServerStartupRuntime } from './lib/opencode/server-startup-runtime.js';
 import { registerNotificationRoutes } from './lib/notifications/routes.js';
+import { createNotificationEmitterRuntime } from './lib/notifications/emitter-runtime.js';
 import { createNotificationTriggerRuntime } from './lib/notifications/runtime.js';
 import { createPushRuntime } from './lib/notifications/push-runtime.js';
 import { createNotificationTemplateRuntime } from './lib/notifications/template-runtime.js';
+import { createGracefulShutdownRuntime } from './lib/opencode/shutdown-runtime.js';
 import webPush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -690,7 +702,6 @@ const sanitizeProjects = (input) => {
   return result;
 };
 
-const DEFAULT_PWA_APP_NAME = 'OpenChamber - AI Coding Assistant';
 const PWA_APP_NAME_MAX_LENGTH = 64;
 
 const normalizePwaAppName = (value, fallback = '') => {
@@ -1338,6 +1349,17 @@ const rejectWebSocketUpgrade = (...args) => requestSecurityRuntime.rejectWebSock
 
 const isRequestOriginAllowed = (...args) => requestSecurityRuntime.isRequestOriginAllowed(...args);
 
+const notificationEmitterRuntime = createNotificationEmitterRuntime({
+  process,
+  getDesktopNotifyEnabled: () => ENV_DESKTOP_NOTIFY,
+  desktopNotifyPrefix: DESKTOP_NOTIFY_PREFIX,
+  getUiNotificationClients: () => uiNotificationClients,
+});
+
+const writeSseEvent = (...args) => notificationEmitterRuntime.writeSseEvent(...args);
+const emitDesktopNotification = (...args) => notificationEmitterRuntime.emitDesktopNotification(...args);
+const broadcastUiNotification = (...args) => notificationEmitterRuntime.broadcastUiNotification(...args);
+
 const sessionRuntime = createSessionRuntime({
   writeSseEvent,
   getNotificationClients: () => uiNotificationClients,
@@ -1363,23 +1385,16 @@ const getHmrState = () => {
 };
 const hmrState = getHmrState();
 
-const normalizeOpenCodePassword = (value) => {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  return value.trim();
-};
-
 if (typeof hmrState.userProvidedOpenCodePassword === 'undefined') {
-  const initialPassword = normalizeOpenCodePassword(process.env.OPENCODE_SERVER_PASSWORD);
+  const initialPassword = typeof process.env.OPENCODE_SERVER_PASSWORD === 'string'
+    ? process.env.OPENCODE_SERVER_PASSWORD.trim()
+    : '';
   hmrState.userProvidedOpenCodePassword = initialPassword || null;
 }
 
 // Non-HMR state (safe to reset on reload)
 let healthCheckInterval = null;
 let server = null;
-let cachedModelsMetadata = null;
-let cachedModelsMetadataTimestamp = 0;
 let expressApp = null;
 let currentRestartPromise = null;
 let isRestartingOpenCode = false;
@@ -1527,76 +1542,24 @@ const ENV_CONFIGURED_OPENCODE_WSL_DISTRO =
         : null
     );
 
-// OpenCode server authentication (Basic Auth with username "opencode")
+const openCodeAuthStateRuntime = createOpenCodeAuthStateRuntime({
+  crypto,
+  process,
+  getAuthPassword: () => openCodeAuthPassword,
+  setAuthPassword: (value) => {
+    openCodeAuthPassword = value;
+  },
+  getAuthSource: () => openCodeAuthSource,
+  setAuthSource: (value) => {
+    openCodeAuthSource = value;
+  },
+  getUserProvidedPassword: () => userProvidedOpenCodePassword,
+  syncToHmrState,
+});
 
-/**
- * Returns auth headers for OpenCode server requests if OPENCODE_SERVER_PASSWORD is set.
- * Uses Basic Auth with username "opencode" and the password from the env variable.
- */
-function getOpenCodeAuthHeaders() {
-  const password = normalizeOpenCodePassword(openCodeAuthPassword || process.env.OPENCODE_SERVER_PASSWORD || '');
-  
-  if (!password) {
-    return {};
-  }
-  
-  const credentials = Buffer.from(`opencode:${password}`).toString('base64');
-  return { Authorization: `Basic ${credentials}` };
-}
-
-function isOpenCodeConnectionSecure() {
-  return Object.prototype.hasOwnProperty.call(getOpenCodeAuthHeaders(), 'Authorization');
-}
-
-function generateSecureOpenCodePassword() {
-  return crypto
-    .randomBytes(32)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-function isValidOpenCodePassword(password) {
-  return typeof password === 'string' && password.trim().length > 0;
-}
-
-function setOpenCodeAuthState(password, source) {
-  const normalized = normalizeOpenCodePassword(password);
-  if (!isValidOpenCodePassword(normalized)) {
-    openCodeAuthPassword = null;
-    openCodeAuthSource = null;
-    delete process.env.OPENCODE_SERVER_PASSWORD;
-    syncToHmrState();
-    return null;
-  }
-
-  openCodeAuthPassword = normalized;
-  openCodeAuthSource = source;
-  process.env.OPENCODE_SERVER_PASSWORD = normalized;
-  syncToHmrState();
-  return normalized;
-}
-
-async function ensureLocalOpenCodeServerPassword({ rotateManaged = false } = {}) {
-  if (isValidOpenCodePassword(userProvidedOpenCodePassword)) {
-    return setOpenCodeAuthState(userProvidedOpenCodePassword, 'user-env');
-  }
-
-  if (rotateManaged) {
-    const rotatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'rotated');
-    console.log('Rotated secure password for managed local OpenCode instance');
-    return rotatedPassword;
-  }
-
-  if (isValidOpenCodePassword(openCodeAuthPassword)) {
-    return setOpenCodeAuthState(openCodeAuthPassword, openCodeAuthSource || 'generated');
-  }
-
-  const generatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'generated');
-  console.log('Generated secure password for managed local OpenCode instance');
-  return generatedPassword;
-}
+const getOpenCodeAuthHeaders = (...args) => openCodeAuthStateRuntime.getOpenCodeAuthHeaders(...args);
+const isOpenCodeConnectionSecure = (...args) => openCodeAuthStateRuntime.isOpenCodeConnectionSecure(...args);
+const ensureLocalOpenCodeServerPassword = (...args) => openCodeAuthStateRuntime.ensureLocalOpenCodeServerPassword(...args);
 
 const openCodeNetworkState = {};
 Object.defineProperties(openCodeNetworkState, {
@@ -1702,10 +1665,10 @@ const notificationTriggerRuntime = createNotificationTriggerRuntime({
 const maybeSendPushForTrigger = (...args) => notificationTriggerRuntime.maybeSendPushForTrigger(...args);
 
 const openCodeWatcherRuntime = createOpenCodeWatcherRuntime({
-  waitForOpenCodePort,
+  waitForOpenCodePort: (...args) => waitForOpenCodePort(...args),
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
-  parseSseDataPayload,
+  parseSseDataPayload: (...args) => parseSseDataPayload(...args),
   onPayload: (payload) => {
     maybeCacheSessionInfoFromEvent(payload);
     void maybeSendPushForTrigger(payload);
@@ -1714,105 +1677,62 @@ const openCodeWatcherRuntime = createOpenCodeWatcherRuntime({
 });
 
 
-function setOpenCodePort(port) {
-  if (!Number.isFinite(port) || port <= 0) {
-    return;
-  }
-
-  const numericPort = Math.trunc(port);
-  const portChanged = openCodePort !== numericPort;
-
-  if (portChanged || openCodePort === null) {
-    openCodePort = numericPort;
-    syncToHmrState();
-    console.log(`Detected OpenCode port: ${openCodePort}`);
-
-    if (portChanged) {
-      isOpenCodeReady = false;
+const serverUtilsRuntime = createServerUtilsRuntime({
+  fs,
+  os,
+  path,
+  process,
+  openCodeReadyGraceMs: OPEN_CODE_READY_GRACE_MS,
+  longRequestTimeoutMs: LONG_REQUEST_TIMEOUT_MS,
+  getRuntime: () => ({
+    openCodePort,
+    openCodeNotReadySince,
+    isOpenCodeReady,
+    isRestartingOpenCode,
+  }),
+  getOpenCodeAuthHeaders,
+  buildOpenCodeUrl,
+  ensureOpenCodeApiPrefix,
+  getUiNotificationClients: () => uiNotificationClients,
+  getOpenCodePort: () => openCodePort,
+  setOpenCodePortState: (value) => {
+    openCodePort = value;
+  },
+  syncToHmrState,
+  markOpenCodeNotReady: () => {
+    isOpenCodeReady = false;
+  },
+  setOpenCodeNotReadySince: (value) => {
+    openCodeNotReadySince = value;
+  },
+  clearLastOpenCodeError: () => {
+    lastOpenCodeError = null;
+  },
+  getLoginShellPath: () => {
+    const snapshot = getLoginShellEnvSnapshot();
+    if (!snapshot || typeof snapshot.PATH !== 'string' || snapshot.PATH.length === 0) {
+      return null;
     }
-    openCodeNotReadySince = Date.now();
-  }
+    return snapshot.PATH;
+  },
+});
 
-  lastOpenCodeError = null;
-}
-
-async function waitForOpenCodePort(timeoutMs = 15000) {
-  if (openCodePort !== null) {
-    return openCodePort;
-  }
-
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    if (openCodePort !== null) {
-      return openCodePort;
-    }
-  }
-
-  throw new Error('Timed out waiting for OpenCode port');
-}
-
-function getLoginShellPath() {
-  const snapshot = getLoginShellEnvSnapshot();
-  if (!snapshot || typeof snapshot.PATH !== 'string' || snapshot.PATH.length === 0) {
-    return null;
-  }
-  return snapshot.PATH;
-}
-
-function buildAugmentedPath() {
-  const augmented = new Set();
-
-  const loginShellPath = getLoginShellPath();
-  if (loginShellPath) {
-    for (const segment of loginShellPath.split(path.delimiter)) {
-      if (segment) {
-        augmented.add(segment);
-      }
-    }
-  }
-
-  const current = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  for (const segment of current) {
-    augmented.add(segment);
-  }
-
-  return Array.from(augmented).join(path.delimiter);
-}
-
-function parseSseDataPayload(block) {
-  if (!block || typeof block !== 'string') {
-    return null;
-  }
-  const dataLines = block
-    .split('\n')
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).replace(/^\s/, ''));
-
-  if (dataLines.length === 0) {
-    return null;
-  }
-
-  const payloadText = dataLines.join('\n').trim();
-  if (!payloadText) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(payloadText);
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      typeof parsed.payload === 'object' &&
-      parsed.payload !== null
-    ) {
-      return parsed.payload;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
+const setOpenCodePort = (...args) => serverUtilsRuntime.setOpenCodePort(...args);
+const waitForOpenCodePort = (...args) => serverUtilsRuntime.waitForOpenCodePort(...args);
+const buildAugmentedPath = (...args) => serverUtilsRuntime.buildAugmentedPath(...args);
+const parseSseDataPayload = (...args) => serverUtilsRuntime.parseSseDataPayload(...args);
+const staticRoutesRuntime = createStaticRoutesRuntime({
+  fs,
+  path,
+  process,
+  __dirname,
+  express,
+  resolveProjectDirectory,
+  buildOpenCodeUrl,
+  getOpenCodeAuthHeaders,
+  readSettingsFromDiskMigrated,
+  normalizePwaAppName,
+});
 
 const openCodeLifecycleState = {};
 Object.defineProperties(openCodeLifecycleState, {
@@ -1861,7 +1781,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
   opencodeShimInterpreter,
   setOpenCodePort,
   setDetectedOpenCodeApiPrefix,
-  setupProxy,
+  setupProxy: (...args) => setupProxy(...args),
   ensureOpenCodeApiPrefix,
   clearResolvedOpenCodeBinary,
 });
@@ -1881,340 +1801,47 @@ const bootstrapOpenCodeAtStartup = async (...args) => {
 };
 const killProcessOnPort = (...args) => openCodeLifecycleRuntime.killProcessOnPort(...args);
 
-function emitDesktopNotification(payload) {
-  if (!ENV_DESKTOP_NOTIFY) {
-    return;
-  }
+const fetchAgentsSnapshot = (...args) => serverUtilsRuntime.fetchAgentsSnapshot(...args);
+const fetchProvidersSnapshot = (...args) => serverUtilsRuntime.fetchProvidersSnapshot(...args);
+const fetchModelsSnapshot = (...args) => serverUtilsRuntime.fetchModelsSnapshot(...args);
+const setupProxy = (...args) => serverUtilsRuntime.setupProxy(...args);
+const gracefulShutdownRuntime = createGracefulShutdownRuntime({
+  process,
+  shutdownTimeoutMs: SHUTDOWN_TIMEOUT,
+  getExitOnShutdown: () => exitOnShutdown,
+  getIsShuttingDown: () => isShuttingDown,
+  setIsShuttingDown: (value) => {
+    isShuttingDown = value;
+  },
+  syncToHmrState,
+  openCodeWatcherRuntime,
+  sessionRuntime,
+  getHealthCheckInterval: () => healthCheckInterval,
+  clearHealthCheckInterval: (value) => clearInterval(value),
+  getTerminalRuntime: () => terminalRuntime,
+  setTerminalRuntime: (value) => {
+    terminalRuntime = value;
+  },
+  shouldSkipOpenCodeStop: () => ENV_SKIP_OPENCODE_START || isExternalOpenCode,
+  getOpenCodePort: () => openCodePort,
+  getOpenCodeProcess: () => openCodeProcess,
+  setOpenCodeProcess: (value) => {
+    openCodeProcess = value;
+  },
+  killProcessOnPort,
+  getServer: () => server,
+  getUiAuthController: () => uiAuthController,
+  setUiAuthController: (value) => {
+    uiAuthController = value;
+  },
+  getActiveTunnelController: () => activeTunnelController,
+  setActiveTunnelController: (value) => {
+    activeTunnelController = value;
+  },
+  tunnelAuthController,
+});
 
-  if (!payload || typeof payload !== 'object') {
-    return;
-  }
-
-  try {
-    // One-line protocol consumed by the Tauri shell.
-    process.stdout.write(`${DESKTOP_NOTIFY_PREFIX}${JSON.stringify(payload)}\n`);
-  } catch {
-    // ignore
-  }
-}
-
-function broadcastUiNotification(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return;
-  }
-
-  if (uiNotificationClients.size === 0) {
-    return;
-  }
-
-  for (const res of uiNotificationClients) {
-    try {
-      writeSseEvent(res, {
-        type: 'openchamber:notification',
-        properties: {
-          ...payload,
-          // Tell the UI whether the sidecar stdout notification channel is active.
-          // When true, the desktop UI should skip this SSE notification to avoid duplicates.
-          // When false (e.g. tauri dev), the UI must handle this SSE notification itself.
-          desktopStdoutActive: ENV_DESKTOP_NOTIFY,
-        },
-      });
-    } catch {
-      // ignore
-    }
-  }
-}
-
-function writeSseEvent(res, payload) {
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
-}
-
-function parseArgs(argv = process.argv.slice(2)) {
-  const args = Array.isArray(argv) ? [...argv] : [];
-  const envPassword =
-    process.env.OPENCHAMBER_UI_PASSWORD ||
-    process.env.OPENCODE_UI_PASSWORD ||
-    null;
-  const envCfTunnel = process.env.OPENCHAMBER_TRY_CF_TUNNEL === 'true';
-  const envTunnelProvider = process.env.OPENCHAMBER_TUNNEL_PROVIDER || undefined;
-  const envTunnelMode = process.env.OPENCHAMBER_TUNNEL_MODE || undefined;
-  const envTunnelConfigRaw = process.env.OPENCHAMBER_TUNNEL_CONFIG;
-  const envTunnelConfig = typeof envTunnelConfigRaw === 'string'
-    ? (envTunnelConfigRaw.trim().length > 0 ? envTunnelConfigRaw.trim() : null)
-    : undefined;
-  const envTunnelToken = process.env.OPENCHAMBER_TUNNEL_TOKEN || undefined;
-  const envTunnelHostname = process.env.OPENCHAMBER_TUNNEL_HOSTNAME || undefined;
-
-  const options = {
-    port: DEFAULT_PORT,
-    host: undefined,
-    uiPassword: envPassword,
-    tryCfTunnel: envCfTunnel,
-    tunnelProvider: envTunnelProvider,
-    tunnelMode: envTunnelMode,
-    tunnelConfigPath: envTunnelConfig,
-    tunnelToken: envTunnelToken,
-    tunnelHostname: envTunnelHostname,
-  };
-
-  const consumeValue = (currentIndex, inlineValue) => {
-    if (typeof inlineValue === 'string') {
-      return { value: inlineValue, nextIndex: currentIndex };
-    }
-    const nextArg = args[currentIndex + 1];
-    if (typeof nextArg === 'string' && !nextArg.startsWith('--')) {
-      return { value: nextArg, nextIndex: currentIndex + 1 };
-    }
-    return { value: undefined, nextIndex: currentIndex };
-  };
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (!arg.startsWith('--')) {
-      continue;
-    }
-
-    const eqIndex = arg.indexOf('=');
-    const optionName = eqIndex >= 0 ? arg.slice(2, eqIndex) : arg.slice(2);
-    const inlineValue = eqIndex >= 0 ? arg.slice(eqIndex + 1) : undefined;
-
-    if (optionName === 'port' || optionName === 'p') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      const parsedPort = parseInt(value ?? '', 10);
-      options.port = Number.isFinite(parsedPort) ? parsedPort : DEFAULT_PORT;
-      continue;
-    }
-
-    if (optionName === 'host') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.host = typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-      continue;
-    }
-
-    if (optionName === 'ui-password') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.uiPassword = typeof value === 'string' ? value : '';
-      continue;
-    }
-
-    if (optionName === 'try-cf-tunnel') {
-      options.tryCfTunnel = true;
-      continue;
-    }
-
-    if (optionName === 'tunnel-provider') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.tunnelProvider = typeof value === 'string' ? value : options.tunnelProvider;
-      continue;
-    }
-
-    if (optionName === 'tunnel-mode') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.tunnelMode = typeof value === 'string' ? value : options.tunnelMode;
-      continue;
-    }
-
-    if (optionName === 'tunnel-config') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.tunnelConfigPath = typeof value === 'string' ? value : null;
-      continue;
-    }
-
-    if (optionName === 'tunnel-token') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.tunnelToken = typeof value === 'string' ? value : options.tunnelToken;
-      continue;
-    }
-
-    if (optionName === 'tunnel-hostname') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.tunnelHostname = typeof value === 'string' ? value : options.tunnelHostname;
-      continue;
-    }
-
-    if (optionName === 'tunnel') {
-      const { value, nextIndex } = consumeValue(i, inlineValue);
-      i = nextIndex;
-      options.tunnelProvider = TUNNEL_PROVIDER_CLOUDFLARE;
-      options.tunnelMode = TUNNEL_MODE_MANAGED_LOCAL;
-      options.tunnelConfigPath = typeof value === 'string' ? value : null;
-      continue;
-    }
-  }
-
-  return options;
-}
-
-
-async function fetchAgentsSnapshot() {
-  if (!openCodePort) {
-    throw new Error('OpenCode port is not available');
-  }
-
-  const response = await fetch(buildOpenCodeUrl('/agent'), {
-    method: 'GET',
-    headers: { Accept: 'application/json',  ...getOpenCodeAuthHeaders()  }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch agents snapshot (status ${response.status})`);
-  }
-
-  const agents = await response.json().catch(() => null);
-  if (!Array.isArray(agents)) {
-    throw new Error('Invalid agents payload from OpenCode');
-  }
-  return agents;
-}
-
-async function fetchProvidersSnapshot() {
-  if (!openCodePort) {
-    throw new Error('OpenCode port is not available');
-  }
-
-  const response = await fetch(buildOpenCodeUrl('/provider'), {
-    method: 'GET',
-    headers: { Accept: 'application/json',  ...getOpenCodeAuthHeaders()  }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch providers snapshot (status ${response.status})`);
-  }
-
-  const providers = await response.json().catch(() => null);
-  if (!Array.isArray(providers)) {
-    throw new Error('Invalid providers payload from OpenCode');
-  }
-  return providers;
-}
-
-async function fetchModelsSnapshot() {
-  if (!openCodePort) {
-    throw new Error('OpenCode port is not available');
-  }
-
-  const response = await fetch(buildOpenCodeUrl('/model'), {
-    method: 'GET',
-    headers: { Accept: 'application/json',  ...getOpenCodeAuthHeaders()  }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch models snapshot (status ${response.status})`);
-  }
-
-  const models = await response.json().catch(() => null);
-  if (!Array.isArray(models)) {
-    throw new Error('Invalid models payload from OpenCode');
-  }
-  return models;
-}
-
-
-function setupProxy(app) {
-  registerOpenCodeProxy(app, {
-    fs,
-    os,
-    path,
-    OPEN_CODE_READY_GRACE_MS,
-    LONG_REQUEST_TIMEOUT_MS,
-    getRuntime: () => ({
-      openCodePort,
-      openCodeNotReadySince,
-      isOpenCodeReady,
-      isRestartingOpenCode,
-    }),
-    getOpenCodeAuthHeaders,
-    buildOpenCodeUrl,
-    ensureOpenCodeApiPrefix,
-    getUiNotificationClients: () => uiNotificationClients,
-  });
-}
-
-async function gracefulShutdown(options = {}) {
-  if (isShuttingDown) return;
-
-  isShuttingDown = true;
-  syncToHmrState();
-  console.log('Starting graceful shutdown...');
-  const exitProcess = typeof options.exitProcess === 'boolean' ? options.exitProcess : exitOnShutdown;
-
-  openCodeWatcherRuntime.stop();
-  sessionRuntime.dispose();
-
-  if (healthCheckInterval) {
-    clearInterval(healthCheckInterval);
-  }
-
-  if (terminalRuntime) {
-    try {
-      await terminalRuntime.shutdown();
-    } catch {
-    } finally {
-      terminalRuntime = null;
-    }
-  }
-
-  // Only stop OpenCode if we started it ourselves (not when using external server)
-  if (!ENV_SKIP_OPENCODE_START && !isExternalOpenCode) {
-    const portToKill = openCodePort;
-
-    if (openCodeProcess) {
-      console.log('Stopping OpenCode process...');
-      try {
-        openCodeProcess.close();
-      } catch (error) {
-        console.warn('Error closing OpenCode process:', error);
-      }
-      openCodeProcess = null;
-    }
-
-    killProcessOnPort(portToKill);
-  } else {
-    console.log('Skipping OpenCode shutdown (external server)');
-  }
-
-  if (server) {
-    await Promise.race([
-      new Promise((resolve) => {
-        server.close(() => {
-          console.log('HTTP server closed');
-          resolve();
-        });
-      }),
-      new Promise((resolve) => {
-        setTimeout(() => {
-          console.warn('Server close timeout reached, forcing shutdown');
-          resolve();
-        }, SHUTDOWN_TIMEOUT);
-      })
-    ]);
-  }
-
-  if (uiAuthController) {
-    uiAuthController.dispose();
-    uiAuthController = null;
-  }
-
-  if (activeTunnelController) {
-    console.log('Stopping active tunnel...');
-    activeTunnelController.stop();
-    activeTunnelController = null;
-    tunnelAuthController.clearActiveTunnel();
-  }
-
-  console.log('Graceful shutdown complete');
-  if (exitProcess) {
-    process.exit(0);
-  }
-}
+const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
 
 async function main(options = {}) {
   const port = Number.isFinite(options.port) && options.port >= 0 ? Math.trunc(options.port) : DEFAULT_PORT;
@@ -2288,11 +1915,14 @@ async function main(options = {}) {
   expressApp = app;
   server = http.createServer(app);
 
-  app.get('/health', (req, res) => {
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      openCodePort: openCodePort,
+  registerServerStatusRoutes(app, {
+    process,
+    openchamberVersion: OPENCHAMBER_VERSION,
+    runtimeName: process.env.OPENCHAMBER_RUNTIME || 'web',
+    serverStartedAt,
+    gracefulShutdown,
+    getHealthSnapshot: () => ({
+      openCodePort,
       openCodeRunning: Boolean(openCodePort && isOpenCodeReady && !isRestartingOpenCode),
       openCodeSecureConnection: isOpenCodeConnectionSecure(),
       openCodeAuthSource: openCodeAuthSource || null,
@@ -2309,23 +1939,7 @@ async function main(options = {}) {
       opencodeWslDistro: resolvedWslDistro || null,
       nodeBinaryResolved: resolvedNodeBinary || null,
       bunBinaryResolved: resolvedBunBinary || null,
-    });
-  });
-
-  app.post('/api/system/shutdown', (req, res) => {
-    res.json({ ok: true });
-    gracefulShutdown({ exitProcess: false }).catch((error) => {
-      console.error('Shutdown request failed:', error?.message || error);
-    });
-  });
-
-  app.get('/api/system/info', (req, res) => {
-    res.json({
-      openchamberVersion: OPENCHAMBER_VERSION,
-      runtime: process.env.OPENCHAMBER_RUNTIME || 'web',
-      pid: process.pid,
-      startedAt: serverStartedAt,
-    });
+    }),
   });
 
   app.use((req, res, next) => {
@@ -2369,70 +1983,11 @@ async function main(options = {}) {
     console.log('UI password protection enabled for browser sessions');
   }
 
-  app.get('/auth/session', async (req, res) => {
-    const requestScope = tunnelAuthController.classifyRequestScope(req);
-    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
-      const tunnelSession = tunnelAuthController.getTunnelSessionFromRequest(req);
-      if (tunnelSession) {
-        return res.json({ authenticated: true, scope: 'tunnel' });
-      }
-      tunnelAuthController.clearTunnelSessionCookie(req, res);
-      return res.status(401).json({ authenticated: false, locked: true, tunnelLocked: true });
-    }
-
-    try {
-      await uiAuthController.handleSessionStatus(req, res);
-    } catch (err) {
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-  app.post('/auth/session', (req, res) => {
-    const requestScope = tunnelAuthController.classifyRequestScope(req);
-    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
-      return res.status(403).json({ error: 'Password login is disabled for tunnel scope', tunnelLocked: true });
-    }
-    return uiAuthController.handleSessionCreate(req, res);
-  });
-
-  app.get('/connect', async (req, res) => {
-    try {
-      const token = typeof req.query?.t === 'string' ? req.query.t : '';
-      const settings = await readSettingsFromDiskMigrated();
-      const tunnelSessionTtlMs = normalizeTunnelSessionTtlMs(settings?.tunnelSessionTtlMs);
-
-      const exchange = tunnelAuthController.exchangeBootstrapToken({
-        req,
-        res,
-        token,
-        sessionTtlMs: tunnelSessionTtlMs,
-      });
-
-      res.setHeader('Cache-Control', 'no-store');
-
-      if (!exchange.ok) {
-        if (exchange.reason === 'rate-limited') {
-          res.setHeader('Retry-After', String(exchange.retryAfter || 60));
-          return res.status(429).type('text/plain').send('Too many attempts. Please try again later.');
-        }
-        return res.status(401).type('text/plain').send('Connection link is invalid or expired.');
-      }
-
-      return res.redirect(302, '/');
-    } catch (error) {
-      return res.status(500).type('text/plain').send('Failed to process connect request.');
-    }
-  });
-
-  app.use('/api', async (req, res, next) => {
-    try {
-      const requestScope = tunnelAuthController.classifyRequestScope(req);
-      if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
-        return tunnelAuthController.requireTunnelSession(req, res, next);
-      }
-      await uiAuthController.requireAuth(req, res, next);
-    } catch (err) {
-      next(err);
-    }
+  registerAuthAndAccessRoutes(app, {
+    tunnelAuthController,
+    uiAuthController,
+    readSettingsFromDiskMigrated,
+    normalizeTunnelSessionTtlMs,
   });
 
   // Voice token endpoint - returns OpenAI TTS availability status
@@ -2460,292 +2015,22 @@ async function main(options = {}) {
     setPushInitialized,
   });
 
-  app.get('/api/openchamber/update-check', async (req, res) => {
-    try {
-      const { checkForUpdates } = await import('./lib/package-manager.js');
-      const parseString = (value) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined);
-      const parseReportUsage = (value) => {
-        if (typeof value !== 'string') return true;
-        const normalized = value.trim().toLowerCase();
-        if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
-        return true;
-      };
-      const inferDeviceClass = (ua) => {
-        const value = (ua || '').toLowerCase();
-        if (!value) return 'unknown';
-        if (value.includes('ipad') || value.includes('tablet')) return 'tablet';
-        if (value.includes('mobi') || value.includes('android') || value.includes('iphone')) return 'mobile';
-        return 'desktop';
-      };
-      const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
-
-      const updateInfo = await checkForUpdates({
-        appType: parseString(req.query.appType),
-        deviceClass: parseString(req.query.deviceClass) || inferDeviceClass(userAgent),
-        platform: parseString(req.query.platform),
-        arch: parseString(req.query.arch),
-        instanceMode: parseString(req.query.instanceMode),
-        currentVersion: parseString(req.query.currentVersion),
-        reportUsage: parseReportUsage(parseString(req.query.reportUsage)),
-      });
-      res.json(updateInfo);
-    } catch (error) {
-      console.error('Failed to check for updates:', error);
-      res.status(500).json({
-        available: false,
-        error: error instanceof Error ? error.message : 'Failed to check for updates',
-      });
-    }
+  registerOpenChamberRoutes(app, {
+    fs,
+    os,
+    path,
+    process,
+    server,
+    __dirname,
+    openchamberDataDir: OPENCHAMBER_DATA_DIR,
+    modelsDevApiUrl: MODELS_DEV_API_URL,
+    modelsMetadataCacheTtl: MODELS_METADATA_CACHE_TTL,
+    readSettingsFromDiskMigrated,
+    fetchFreeZenModels,
+    getCachedZenModels,
   });
 
-  app.post('/api/openchamber/update-install', async (_req, res) => {
-    try {
-      const { spawn: spawnChild } = await import('child_process');
-      const {
-        checkForUpdates,
-        getUpdateCommand,
-        detectPackageManager,
-      } = await import('./lib/package-manager.js');
-
-      // Verify update is available
-      const updateInfo = await checkForUpdates();
-      if (!updateInfo.available) {
-        return res.status(400).json({ error: 'No update available' });
-      }
-
-      const pm = detectPackageManager();
-      const updateCmd = getUpdateCommand(pm);
-      const isContainer =
-        fs.existsSync('/.dockerenv') ||
-        Boolean(process.env.CONTAINER) ||
-        process.env.container === 'docker';
-
-      if (isContainer) {
-        res.json({
-          success: true,
-          message: 'Update starting, server will stay online',
-          version: updateInfo.version,
-          packageManager: pm,
-          autoRestart: false,
-        });
-
-        setTimeout(() => {
-          console.log(`\nInstalling update using ${pm} (container mode)...`);
-          console.log(`Running: ${updateCmd}`);
-
-          const shell = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : 'sh';
-          const shellFlag = process.platform === 'win32' ? '/c' : '-c';
-          const child = spawnChild(shell, [shellFlag, updateCmd], {
-            detached: true,
-            stdio: 'ignore',
-            env: process.env,
-          });
-          child.unref();
-        }, 500);
-
-        return;
-      }
-
-      // Get current server port for restart
-      const currentPort = server.address()?.port || 3000;
-
-      // Try to read stored instance options for restart
-      const tmpDir = os.tmpdir();
-      const instanceFilePath = path.join(tmpDir, `openchamber-${currentPort}.json`);
-      let storedOptions = { port: currentPort, daemon: true };
-      try {
-        const content = await fs.promises.readFile(instanceFilePath, 'utf8');
-        storedOptions = JSON.parse(content);
-      } catch {
-        // Use defaults
-      }
-
-      const isWindows = process.platform === 'win32';
-
-      const quotePosix = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
-      const quoteCmd = (value) => {
-        const stringValue = String(value);
-        return `"${stringValue.replace(/"/g, '""')}"`;
-      };
-
-      // Build restart command using explicit runtime + CLI path.
-      // Avoids relying on `openchamber` being in PATH for service environments.
-      const cliPath = path.resolve(__dirname, '..', 'bin', 'cli.js');
-      const restartParts = [
-        isWindows ? quoteCmd(process.execPath) : quotePosix(process.execPath),
-        isWindows ? quoteCmd(cliPath) : quotePosix(cliPath),
-        'serve',
-        '--port',
-        String(storedOptions.port),
-        '--daemon',
-      ];
-      let restartCmdPrimary = restartParts.join(' ');
-      let restartCmdFallback = `openchamber serve --port ${storedOptions.port} --daemon`;
-      if (storedOptions.uiPassword) {
-        if (isWindows) {
-          // Escape for cmd.exe quoted argument
-          const escapedPw = storedOptions.uiPassword.replace(/"/g, '""');
-          restartCmdPrimary += ` --ui-password "${escapedPw}"`;
-          restartCmdFallback += ` --ui-password "${escapedPw}"`;
-        } else {
-          // Escape for POSIX single-quoted argument
-          const escapedPw = storedOptions.uiPassword.replace(/'/g, "'\\''");
-          restartCmdPrimary += ` --ui-password '${escapedPw}'`;
-          restartCmdFallback += ` --ui-password '${escapedPw}'`;
-        }
-      }
-      const restartCmd = `(${restartCmdPrimary}) || (${restartCmdFallback})`;
-
-      // Respond immediately - update will happen after response
-      res.json({
-        success: true,
-        message: 'Update starting, server will restart shortly',
-        version: updateInfo.version,
-        packageManager: pm,
-        autoRestart: true,
-      });
-
-      // Give time for response to be sent
-      setTimeout(() => {
-        console.log(`\nInstalling update using ${pm}...`);
-        console.log(`Running: ${updateCmd}`);
-
-        // Create a script that will:
-        // 1. Wait for current process to exit
-        // 2. Run the update
-        // 3. Restart the server with original options
-        const shell = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'sh';
-        const shellFlag = isWindows ? '/c' : '-c';
-        const script = isWindows
-          ? `
-            timeout /t 2 /nobreak >nul
-            ${updateCmd}
-            if %ERRORLEVEL% EQU 0 (
-              echo Update successful, restarting OpenChamber...
-              ${restartCmd}
-            ) else (
-              echo Update failed
-              exit /b 1
-            )
-          `
-          : `
-            sleep 2
-            ${updateCmd}
-            if [ $? -eq 0 ]; then
-              echo "Update successful, restarting OpenChamber..."
-              ${restartCmd}
-            else
-              echo "Update failed"
-              exit 1
-            fi
-          `;
-
-        // Spawn detached shell to run update after we exit.
-        // Capture output to disk so restart failures are diagnosable.
-        const updateLogPath = path.join(OPENCHAMBER_DATA_DIR, 'update-install.log');
-        let logFd = null;
-        try {
-          fs.mkdirSync(path.dirname(updateLogPath), { recursive: true });
-          logFd = fs.openSync(updateLogPath, 'a');
-        } catch (logError) {
-          console.warn('Failed to open update log file, continuing without log capture:', logError);
-        }
-
-        const child = spawnChild(shell, [shellFlag, script], {
-          detached: true,
-          stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
-          env: process.env,
-        });
-        child.unref();
-
-        if (logFd !== null) {
-          try {
-            fs.closeSync(logFd);
-          } catch {
-            // ignore
-          }
-        }
-
-        console.log('Update process spawned, shutting down server...');
-
-        // Give child process time to start, then exit
-        setTimeout(() => {
-          process.exit(0);
-        }, 500);
-      }, 500);
-    } catch (error) {
-      console.error('Failed to install update:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Failed to install update',
-      });
-    }
-  });
-
-  app.get('/api/openchamber/models-metadata', async (req, res) => {
-    const now = Date.now();
-
-    if (cachedModelsMetadata && now - cachedModelsMetadataTimestamp < MODELS_METADATA_CACHE_TTL) {
-      res.setHeader('Cache-Control', 'public, max-age=60');
-      return res.json(cachedModelsMetadata);
-    }
-
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeout = controller ? setTimeout(() => controller.abort(), 8000) : null;
-
-    try {
-      const response = await fetch(MODELS_DEV_API_URL, {
-        signal: controller?.signal,
-        headers: {
-          Accept: 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`models.dev responded with status ${response.status}`);
-      }
-
-      const metadata = await response.json();
-      cachedModelsMetadata = metadata;
-      cachedModelsMetadataTimestamp = Date.now();
-
-      res.setHeader('Cache-Control', 'public, max-age=300');
-      res.json(metadata);
-    } catch (error) {
-      console.warn('Failed to fetch models.dev metadata via server:', error);
-
-      if (cachedModelsMetadata) {
-        res.setHeader('Cache-Control', 'public, max-age=60');
-        res.json(cachedModelsMetadata);
-      } else {
-        const statusCode = error?.name === 'AbortError' ? 504 : 502;
-        res.status(statusCode).json({ error: 'Failed to retrieve model metadata' });
-      }
-    } finally {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-    }
-  });
-
-  // Zen models endpoint - returns available free models from the zen API
-  app.get('/api/zen/models', async (_req, res) => {
-    try {
-      const models = await fetchFreeZenModels();
-      res.setHeader('Cache-Control', 'public, max-age=300');
-      res.json({ models });
-    } catch (error) {
-      console.warn('Failed to fetch zen models:', error);
-      // Serve stale cache if available
-      const cachedZenModels = getCachedZenModels();
-      if (cachedZenModels) {
-        res.setHeader('Cache-Control', 'public, max-age=60');
-        res.json(cachedZenModels);
-      } else {
-        const statusCode = error?.name === 'AbortError' ? 504 : 502;
-        res.status(statusCode).json({ error: 'Failed to retrieve zen models' });
-      }
-    }
-  });
+  let activePort = port;
 
   const tunnelService = createTunnelService({
     registry: tunnelProviderRegistry,
@@ -2840,14 +2125,12 @@ async function main(options = {}) {
     };
   };
 
-  app.get('/api/config/themes', async (_req, res) => {
-    try {
-      const customThemes = await readCustomThemesFromDisk();
-      res.json({ themes: customThemes });
-    } catch (error) {
-      console.error('Failed to load custom themes:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to load custom themes' });
-    }
+  const { getProviderSources, removeProviderConfig } = await import('./lib/opencode/index.js');
+
+  registerSettingsUtilityRoutes(app, {
+    readCustomThemesFromDisk,
+    refreshOpenCodeAfterConfigChange,
+    clientReloadDelayMs: CLIENT_RELOAD_DELAY_MS,
   });
 
   registerOpenCodeRoutes(app, {
@@ -2889,8 +2172,6 @@ async function main(options = {}) {
     createCommand,
     updateCommand,
     deleteCommand,
-    getProviderSources,
-    removeProviderConfig,
     listMcpConfigs,
     getMcpConfig,
     createMcpConfig,
@@ -2984,27 +2265,6 @@ async function main(options = {}) {
     getProfile,
   });
 
-  app.post('/api/config/reload', async (req, res) => {
-    try {
-      console.log('[Server] Manual configuration reload requested');
-
-      await refreshOpenCodeAfterConfigChange('manual configuration reload');
-
-      res.json({
-        success: true,
-        requiresReload: true,
-        message: 'Configuration reloaded successfully. Refreshing interface…',
-        reloadDelayMs: CLIENT_RELOAD_DELAY_MS,
-      });
-    } catch (error) {
-      console.error('[Server] Failed to reload configuration:', error);
-      res.status(500).json({
-        error: error.message || 'Failed to reload configuration',
-        success: false
-      });
-    }
-  });
-
   let quotaProviders = null;
   const getQuotaProviders = async () => {
     if (!quotaProviders) {
@@ -3052,362 +2312,37 @@ async function main(options = {}) {
   scheduleOpenCodeApiDetection();
   void bootstrapOpenCodeAtStartup();
 
-  const distPath = (() => {
-    const env = typeof process.env.OPENCHAMBER_DIST_DIR === 'string' ? process.env.OPENCHAMBER_DIST_DIR.trim() : '';
-    if (env) {
-      return path.resolve(env);
-    }
-    return path.join(__dirname, '..', 'dist');
-  })();
+  staticRoutesRuntime.registerStaticRoutes(app);
 
-    if (fs.existsSync(distPath)) {
-      console.log(`Serving static files from ${distPath}`);
-      app.use(express.static(distPath, {
-        setHeaders(res, filePath) {
-          // Service workers should never be long-cached; iOS is especially sensitive.
-          if (typeof filePath === 'string' && filePath.endsWith(`${path.sep}sw.js`)) {
-            res.setHeader('Cache-Control', 'no-store');
-          }
-        },
-      }));
-
-      const recentPwaSessionsCache = new Map();
-
-      const getRecentPwaSessionShortcuts = async (req) => {
-        const now = Date.now();
-
-        const resolvedDirectoryResult = await resolveProjectDirectory(req).catch(() => ({ directory: null }));
-        const preferredDirectory = typeof resolvedDirectoryResult?.directory === 'string'
-          ? resolvedDirectoryResult.directory
-          : null;
-
-        const cacheKey = preferredDirectory ? `dir:${preferredDirectory}` : 'global';
-        const cached = recentPwaSessionsCache.get(cacheKey);
-        if (cached && now - cached.at < 5000) {
-          return cached.data;
-        }
-
-        const normalizeShortcutTitle = (value, fallback) => {
-          const normalized = normalizePwaAppName(value, fallback);
-          return normalized.length > 48 ? normalized.slice(0, 48) : normalized;
-        };
-
-        const toFiniteNumber = (value) => {
-          if (typeof value === 'number' && Number.isFinite(value)) {
-            return value;
-          }
-          if (typeof value === 'string' && value.trim().length > 0) {
-            const parsed = Number(value);
-            if (Number.isFinite(parsed)) {
-              return parsed;
-            }
-          }
-          return null;
-        };
-
-        const normalizeDirectory = (value) => {
-          if (typeof value !== 'string') {
-            return '';
-          }
-          const trimmed = value.trim();
-          if (!trimmed) {
-            return '';
-          }
-          const normalized = trimmed.replace(/\\/g, '/');
-          if (normalized === '/') {
-            return '/';
-          }
-          return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized;
-        };
-
-        const sessionUpdatedAt = (session) => {
-          const time = session && typeof session.time === 'object' ? session.time : null;
-          return toFiniteNumber(time?.updated) ?? toFiniteNumber(time?.created) ?? 0;
-        };
-
-        const filterSessionsByDirectory = (sessions, directory) => {
-          const normalizedDirectory = normalizeDirectory(directory);
-          if (!normalizedDirectory) {
-            return sessions;
-          }
-
-          const prefix = normalizedDirectory === '/' ? '/' : `${normalizedDirectory}/`;
-          return sessions.filter((session) => {
-            const sessionDirectory = normalizeDirectory(session?.directory);
-            if (!sessionDirectory) {
-              return false;
-            }
-            return sessionDirectory === normalizedDirectory || (prefix !== '/' && sessionDirectory.startsWith(prefix));
-          });
-        };
-
-        const listSessions = async (directory) => {
-          const query = (() => {
-            if (typeof directory !== 'string' || directory.length === 0) {
-              return '';
-            }
-            const preparedDirectory = process.platform === 'win32'
-              ? directory.replace(/\//g, '\\')
-              : directory;
-            return `?directory=${encodeURIComponent(preparedDirectory)}`;
-          })();
-
-          const response = await fetch(buildOpenCodeUrl(`/session${query}`, ''), {
-            method: 'GET',
-            headers: {
-              Accept: 'application/json',
-              ...getOpenCodeAuthHeaders(),
-            },
-            signal: AbortSignal.timeout(2500),
-          });
-
-          if (!response.ok) {
-            return [];
-          }
-
-          const payload = await response.json().catch(() => null);
-          return Array.isArray(payload) ? payload : [];
-        };
-
-        try {
-          let payload = [];
-
-          if (preferredDirectory) {
-            const scopedPayload = await listSessions(preferredDirectory);
-            const filteredScopedPayload = filterSessionsByDirectory(scopedPayload, preferredDirectory);
-
-            if (filteredScopedPayload.length > 0) {
-              payload = filteredScopedPayload;
-            } else {
-              const globalPayload = await listSessions(null);
-              const filteredGlobalPayload = filterSessionsByDirectory(globalPayload, preferredDirectory);
-              payload = filteredGlobalPayload.length > 0 ? filteredGlobalPayload : globalPayload;
-            }
-          } else {
-            payload = await listSessions(null);
-          }
-
-          const seen = new Set();
-          const rows = [];
-
-          for (const item of payload) {
-            if (!item || typeof item !== 'object') {
-              continue;
-            }
-
-            const id = typeof item.id === 'string' ? item.id.trim().slice(0, 160) : '';
-            if (!id || seen.has(id)) {
-              continue;
-            }
-
-            seen.add(id);
-            const title = normalizeShortcutTitle(item.title, `Session ${rows.length + 1}`);
-            const updatedAt = sessionUpdatedAt(item);
-
-            rows.push({ id, title, updatedAt });
-          }
-
-          rows.sort((a, b) => b.updatedAt - a.updatedAt);
-
-          const shortcuts = rows.slice(0, 3).map((session) => ({
-            name: session.title,
-            short_name: session.title.length > 32 ? session.title.slice(0, 32) : session.title,
-            description: 'Open recent session',
-            url: `/?session=${encodeURIComponent(session.id)}`,
-            icons: [{ src: '/pwa-192.png', sizes: '192x192', type: 'image/png' }],
-          }));
-
-          recentPwaSessionsCache.set(cacheKey, { at: now, data: shortcuts });
-          return shortcuts;
-        } catch {
-          recentPwaSessionsCache.set(cacheKey, { at: now, data: [] });
-          return [];
-        }
-      };
-
-      app.get('/manifest.webmanifest', async (req, res) => {
-        const hasQueryOverride =
-          typeof req.query?.pwa_name === 'string'
-          || typeof req.query?.app_name === 'string'
-          || typeof req.query?.appName === 'string';
-
-        let queryValueRaw = '';
-        if (typeof req.query?.pwa_name === 'string') {
-          queryValueRaw = req.query.pwa_name;
-        } else if (typeof req.query?.app_name === 'string') {
-          queryValueRaw = req.query.app_name;
-        } else if (typeof req.query?.appName === 'string') {
-          queryValueRaw = req.query.appName;
-        }
-
-        const queryOverrideName = normalizePwaAppName(queryValueRaw, '');
-
-        let storedName = '';
-        try {
-          const settings = await readSettingsFromDiskMigrated();
-          storedName = normalizePwaAppName(settings?.pwaAppName, '');
-        } catch {
-          storedName = '';
-        }
-
-        const appName = hasQueryOverride
-          ? (queryOverrideName || DEFAULT_PWA_APP_NAME)
-          : (storedName || DEFAULT_PWA_APP_NAME);
-
-        const shortName = appName.length > 30 ? appName.slice(0, 30) : appName;
-        const recentSessionShortcuts = await getRecentPwaSessionShortcuts(req);
-
-        const manifest = {
-          name: appName,
-          short_name: shortName,
-          description: 'Web interface companion for OpenCode AI coding agent',
-          id: '/',
-          start_url: '/',
-          scope: '/',
-          display: 'standalone',
-          background_color: '#151313',
-          theme_color: '#edb449',
-          orientation: 'any',
-          icons: [
-            { src: '/pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-            { src: '/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-            { src: '/pwa-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-            { src: '/pwa-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-            { src: '/apple-touch-icon-180x180.png', sizes: '180x180', type: 'image/png', purpose: 'any' },
-            { src: '/apple-touch-icon-152x152.png', sizes: '152x152', type: 'image/png', purpose: 'any' },
-            { src: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
-            { src: '/favicon-16.png', sizes: '16x16', type: 'image/png' },
-          ],
-          shortcuts: [
-            {
-              name: 'Appearance Settings',
-              short_name: 'Settings',
-              description: 'Open appearance settings',
-              url: '/?settings=appearance',
-              icons: [{ src: '/pwa-192.png', sizes: '192x192', type: 'image/png' }],
-            },
-            ...recentSessionShortcuts,
-          ],
-          categories: ['developer', 'tools', 'productivity'],
-          lang: 'en',
-        };
-
-        res.setHeader('Cache-Control', 'no-store, must-revalidate');
-        res.type('application/manifest+json');
-        res.send(JSON.stringify(manifest));
-      });
-
-    app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  } else {
-    console.warn(`Warning: ${distPath} not found, static files will not be served`);
-    app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (req, res) => {
-      res.status(404).send('Static files not found. Please build the application first.');
-    });
-  }
-
-  let activePort = port;
-
-  const bindHost = host
-    || (typeof process.env.OPENCHAMBER_HOST === 'string' && process.env.OPENCHAMBER_HOST.trim().length > 0
-      ? process.env.OPENCHAMBER_HOST.trim()
-      : '127.0.0.1');
-
-  await new Promise((resolve, reject) => {
-    const onError = (error) => {
-      server.off('error', onError);
-      reject(error);
-    };
-    server.once('error', onError);
-    const onListening = async () => {
-      server.off('error', onError);
-      const addressInfo = server.address();
-      activePort = typeof addressInfo === 'object' && addressInfo ? addressInfo.port : port;
-
-      try {
-        process.send?.({ type: 'openchamber:ready', port: activePort });
-      } catch {
-        // ignore
-      }
-
-      const displayHost = (bindHost === '0.0.0.0' || bindHost === '::' || bindHost === '[::]')
-        ? 'localhost'
-        : (bindHost.includes(':') ? `[${bindHost}]` : bindHost);
-      console.log(`OpenChamber server listening on ${bindHost}:${activePort}`);
-      console.log(`Health check: http://${displayHost}:${activePort}/health`);
-      console.log(`Web interface: http://${displayHost}:${activePort}`);
-
-      if (startupTunnelRequest) {
-        const startupModeLabel = startupTunnelRequest.mode === TUNNEL_MODE_QUICK
-          ? 'Quick Tunnel'
-          : (startupTunnelRequest.mode === TUNNEL_MODE_MANAGED_LOCAL
-            ? 'Managed Local Tunnel'
-            : (startupTunnelRequest.mode === TUNNEL_MODE_MANAGED_REMOTE ? 'Managed Remote Tunnel' : 'Tunnel'));
-        console.log(`\nInitializing ${startupModeLabel} for provider '${startupTunnelRequest.provider}'...`);
-        try {
-          const { publicUrl, mode } = await startTunnelWithNormalizedRequest({
-            provider: startupTunnelRequest.provider,
-            mode: startupTunnelRequest.mode,
-            intent: startupTunnelRequest.intent,
-            hostname: startupTunnelRequest.hostname,
-            token: startupTunnelRequest.token,
-            configPath: startupTunnelRequest.configPath,
-            selectedPresetId: '',
-            selectedPresetName: '',
-          });
-          if (publicUrl) {
-            tunnelAuthController.setActiveTunnel({
-              tunnelId: crypto.randomUUID(),
-              publicUrl,
-              mode,
-            });
-            const settings = await readSettingsFromDiskMigrated();
-            const bootstrapTtlMs = settings?.tunnelBootstrapTtlMs === null
-              ? null
-              : normalizeTunnelBootstrapTtlMs(settings?.tunnelBootstrapTtlMs);
-            const bootstrapToken = tunnelAuthController.issueBootstrapToken({ ttlMs: bootstrapTtlMs });
-            const connectUrl = `${publicUrl.replace(/\/$/, '')}/connect?t=${encodeURIComponent(bootstrapToken.token)}`;
-            if (onTunnelReady) {
-              onTunnelReady(publicUrl, connectUrl);
-            } else {
-              console.log(`\n🌐 Tunnel URL: ${connectUrl}`);
-              console.log('🔑 One-time connect link (expires after first use)\n');
-            }
-          } else if (onTunnelReady) {
-            onTunnelReady(publicUrl, null);
-          }
-        } catch (error) {
-          console.error(`Failed to start tunnel: ${error.message}`);
-          console.log('Continuing without tunnel...');
-        }
-      }
-
-      resolve();
-    };
-
-    server.listen(port, bindHost, onListening);
+  const serverStartupRuntime = createServerStartupRuntime({
+    process,
+    crypto,
+    server,
+    normalizeTunnelBootstrapTtlMs,
+    readSettingsFromDiskMigrated,
+    tunnelAuthController,
+    startTunnelWithNormalizedRequest,
+    gracefulShutdown,
+    getSignalsAttached: () => signalsAttached,
+    setSignalsAttached: (value) => {
+      signalsAttached = value;
+    },
+    syncToHmrState,
+    TUNNEL_MODE_QUICK,
+    TUNNEL_MODE_MANAGED_LOCAL,
+    TUNNEL_MODE_MANAGED_REMOTE,
   });
 
-  if (attachSignals && !signalsAttached) {
-    const handleSignal = async () => {
-      await gracefulShutdown();
-    };
-    process.on('SIGTERM', handleSignal);
-    process.on('SIGINT', handleSignal);
-    process.on('SIGQUIT', handleSignal);
-    signalsAttached = true;
-    syncToHmrState();
-  }
-
-  process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  const bindHost = serverStartupRuntime.resolveBindHost(host);
+  const startupResult = await serverStartupRuntime.startListeningAndMaybeTunnel({
+    port,
+    bindHost,
+    startupTunnelRequest,
+    onTunnelReady,
   });
+  activePort = startupResult.activePort;
 
-  process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
-    gracefulShutdown();
-  });
+  serverStartupRuntime.attachProcessHandlers({ attachSignals });
 
   return {
     expressApp: app,
@@ -3425,7 +2360,13 @@ async function main(options = {}) {
 const isCliExecution = process.argv[1] === __filename;
 
 if (isCliExecution) {
-  const cliOptions = parseArgs();
+  const cliOptions = parseServeCliOptions({
+    argv: process.argv.slice(2),
+    env: process.env,
+    defaultPort: DEFAULT_PORT,
+    cloudflareProvider: TUNNEL_PROVIDER_CLOUDFLARE,
+    managedLocalMode: TUNNEL_MODE_MANAGED_LOCAL,
+  });
   exitOnShutdown = true;
   main({
     port: cliOptions.port,
@@ -3445,4 +2386,10 @@ if (isCliExecution) {
   });
 }
 
-export { gracefulShutdown, setupProxy, restartOpenCode, main as startWebUiServer, parseArgs };
+export {
+  gracefulShutdown,
+  setupProxy,
+  restartOpenCode,
+  main as startWebUiServer,
+  parseServeCliOptions as parseArgs,
+};

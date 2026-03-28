@@ -6,12 +6,22 @@ This module provides OpenCode server integration utilities for the web server ru
 ## Entrypoints and structure
 - `packages/web/server/lib/opencode/index.js`: public entrypoint (currently baseline placeholder).
 - `packages/web/server/lib/opencode/auth.js`: provider authentication file operations.
+- `packages/web/server/lib/opencode/auth-state-runtime.js`: managed OpenCode server auth password/header runtime.
+- `packages/web/server/lib/opencode/cli-options.js`: CLI/environment option parsing for server startup arguments.
 - `packages/web/server/lib/opencode/routes.js`: OpenCode/provider settings and auth-related route registration.
 - `packages/web/server/lib/opencode/lifecycle.js`: OpenCode process lifecycle runtime (startup, restart, readiness, health monitoring).
 - `packages/web/server/lib/opencode/env-runtime.js`: OpenCode CLI/binary resolution and shell environment runtime.
 - `packages/web/server/lib/opencode/network-runtime.js`: OpenCode URL construction, health-probe readiness checks, and API prefix runtime.
 - `packages/web/server/lib/opencode/project-directory-runtime.js`: request-scoped and settings-backed project directory resolution/validation runtime.
 - `packages/web/server/lib/opencode/config-entity-routes.js`: route registration for agent/command/MCP config orchestration and reload semantics.
+- `packages/web/server/lib/opencode/cli-options.js`: CLI/environment option parsing for server startup arguments.
+- `packages/web/server/lib/opencode/core-routes.js`: server status/system routes, auth/access guard routes, and settings utility route registration.
+- `packages/web/server/lib/opencode/shutdown-runtime.js`: graceful shutdown orchestration runtime for watcher/session/terminal/process/server teardown.
+- `packages/web/server/lib/opencode/server-startup-runtime.js`: server listen/startup tunnel flow and process/signal handler orchestration runtime.
+- `packages/web/server/lib/opencode/static-routes-runtime.js`: static asset/SPA fallback route registration and manifest route wiring.
+- `packages/web/server/lib/opencode/server-utils-runtime.js`: shared server runtime utilities for OpenCode proxy wiring, OpenCode port/readiness helpers, and snapshot fetchers.
+- `packages/web/server/lib/opencode/openchamber-routes.js`: OpenChamber update and models metadata route registration.
+- `packages/web/server/lib/opencode/pwa-manifest-routes.js`: PWA manifest route registration with recent-session shortcut resolution and short-lived caching.
 - `packages/web/server/lib/opencode/project-icon-routes.js`: project icon upload/read/discovery route registration and icon storage orchestration.
 - `packages/web/server/lib/opencode/skill-routes.js`: route registration for skill config CRUD, supporting files, and skills catalog scan/install flows.
 - `packages/web/server/lib/opencode/settings-runtime.js`: Settings persistence runtime (disk IO, migrations, normalization, project validation, and persisted update serialization).
@@ -140,6 +150,73 @@ This module provides OpenCode server integration utilities for the web server ru
   - Agents: `/api/config/agents/:name` and `/api/config/agents/:name/config`
   - Commands: `/api/config/commands/:name`
   - MCP servers: `/api/config/mcp` and `/api/config/mcp/:name`
+
+## Public exports (auth-state-runtime.js)
+- `createOpenCodeAuthStateRuntime(dependencies)`: creates runtime for managed OpenCode auth password state and request headers.
+- Returned API:
+  - `getOpenCodeAuthHeaders()`
+  - `isOpenCodeConnectionSecure()`
+  - `ensureLocalOpenCodeServerPassword(options?)`
+
+## Public exports (core-routes.js)
+- `registerServerStatusRoutes(app, dependencies)`: registers status/system endpoints:
+  - `GET /health`
+  - `POST /api/system/shutdown`
+  - `GET /api/system/info`
+- `registerAuthAndAccessRoutes(app, dependencies)`: registers browser auth/session exchange and API access middleware:
+  - `GET /auth/session`
+  - `POST /auth/session`
+  - `GET /connect`
+  - `app.use('/api', ...)` auth/tunnel guard
+- `registerSettingsUtilityRoutes(app, dependencies)`: registers small settings utility endpoints:
+  - `GET /api/config/themes`
+  - `POST /api/config/reload`
+
+## Public exports (cli-options.js)
+- `parseServeCliOptions(options)`: parses serve CLI flags and environment-derived defaults:
+  - Port/host/ui-password
+  - Tunnel provider/mode/config/token/hostname
+  - Legacy `--tunnel` shorthand normalization
+
+## Public exports (server-utils-runtime.js)
+- `createServerUtilsRuntime(dependencies)`: creates server utility runtime for OpenCode orchestration helpers.
+- Returned API:
+  - `setOpenCodePort(port)`
+  - `waitForOpenCodePort(timeoutMs?)`
+  - `buildAugmentedPath()`
+  - `parseSseDataPayload(block)`
+  - `fetchAgentsSnapshot()`
+  - `fetchProvidersSnapshot()`
+  - `fetchModelsSnapshot()`
+  - `setupProxy(app)`
+
+## Public exports (shutdown-runtime.js)
+- `createGracefulShutdownRuntime(dependencies)`: creates graceful shutdown runtime for managed OpenCode and web server teardown sequencing.
+- Returned API:
+  - `gracefulShutdown(options?)`
+
+## Public exports (server-startup-runtime.js)
+- `createServerStartupRuntime(dependencies)`: creates runtime for server bind/startup tunnel and process handler wiring.
+- Returned API:
+  - `resolveBindHost(host)`
+  - `startListeningAndMaybeTunnel(options)`
+  - `attachProcessHandlers(options)`
+
+## Public exports (static-routes-runtime.js)
+- `createStaticRoutesRuntime(dependencies)`: creates runtime for static dist resolution and static route registration.
+- Returned API:
+  - `registerStaticRoutes(app)`
+
+## Public exports (openchamber-routes.js)
+- `registerOpenChamberRoutes(app, dependencies)`: registers OpenChamber endpoints:
+  - `GET /api/openchamber/update-check`
+  - `POST /api/openchamber/update-install`
+  - `GET /api/openchamber/models-metadata`
+  - `GET /api/zen/models`
+
+## Public exports (pwa-manifest-routes.js)
+- `registerPwaManifestRoute(app, dependencies)`: registers PWA manifest endpoint with dynamic app-name resolution and recent-session shortcuts:
+  - `GET /manifest.webmanifest`
 
 ## Public exports (project-icon-routes.js)
 - `registerProjectIconRoutes(app, dependencies)`: registers project icon routes and owns icon storage/discovery flow:

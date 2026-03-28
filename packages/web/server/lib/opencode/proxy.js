@@ -1,4 +1,6 @@
 import express from 'express';
+// SSE proxy removed — EventPipeline connects to OpenCode SSE directly via SDK.
+// This proxy now only forwards non-SSE API requests to OpenCode.
 
 export const registerOpenCodeProxy = (app, deps) => {
   const {
@@ -72,196 +74,6 @@ export const registerOpenCodeProxy = (app, deps) => {
       : (typeof req.url === 'string' ? req.url : '/');
     return rewriteWindowsDirectoryParam(stripApiPrefix(rawUrl));
   };
-
-  const isSseApiPath = (value) => value === '/event' || value === '/global/event';
-
-  const forwardSseRequest = async (req, res, options = {}) => {
-    const startedAt = Date.now();
-    const {
-      upstreamPath: explicitUpstreamPath,
-      directory = null,
-      registerUiClient = false,
-    } = options;
-    const upstreamPath = explicitUpstreamPath || getUpstreamPathForRequest(req);
-    const targetUrl = new URL(buildOpenCodeUrl(upstreamPath, ''));
-    if (typeof directory === 'string' && directory.trim().length > 0) {
-      targetUrl.searchParams.set('directory', directory.trim());
-    }
-    const authHeaders = getOpenCodeAuthHeaders();
-
-    const requestHeaders = {
-      ...(typeof req.headers.accept === 'string' ? { accept: req.headers.accept } : { accept: 'text/event-stream' }),
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
-      ...(authHeaders.Authorization ? { Authorization: authHeaders.Authorization } : {}),
-    };
-
-    const lastEventId = req.header('Last-Event-ID');
-    if (typeof lastEventId === 'string' && lastEventId.length > 0) {
-      requestHeaders['Last-Event-ID'] = lastEventId;
-    }
-
-    const controller = new AbortController();
-    let connectTimer = null;
-    let idleTimer = null;
-    let heartbeatTimer = null;
-    let endedBy = 'upstream-end';
-
-    const cleanup = () => {
-      if (connectTimer) {
-        clearTimeout(connectTimer);
-        connectTimer = null;
-      }
-      if (idleTimer) {
-        clearTimeout(idleTimer);
-        idleTimer = null;
-      }
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-        heartbeatTimer = null;
-      }
-      if (registerUiClient) {
-        getUiNotificationClients().delete(res);
-      }
-      req.off('close', onClientClose);
-      req.off('error', onClientClose);
-    };
-
-    const resetIdleTimeout = () => {
-      if (idleTimer) {
-        clearTimeout(idleTimer);
-      }
-      idleTimer = setTimeout(() => {
-        endedBy = 'idle-timeout';
-        controller.abort();
-      }, 5 * 60 * 1000);
-    };
-
-    const onClientClose = () => {
-      endedBy = 'client-disconnect';
-      controller.abort();
-    };
-
-    req.on('close', onClientClose);
-    req.on('error', onClientClose);
-
-    try {
-      connectTimer = setTimeout(() => {
-        endedBy = 'connect-timeout';
-        controller.abort();
-      }, 10 * 1000);
-
-      const upstreamResponse = await fetch(targetUrl, {
-        method: 'GET',
-        headers: requestHeaders,
-        signal: controller.signal,
-      });
-
-      if (connectTimer) {
-        clearTimeout(connectTimer);
-        connectTimer = null;
-      }
-
-      if (!upstreamResponse.ok || !upstreamResponse.body) {
-        const body = await upstreamResponse.text().catch(() => '');
-        cleanup();
-        if (!res.headersSent) {
-          if (upstreamResponse.headers.has('content-type')) {
-            res.setHeader('content-type', upstreamResponse.headers.get('content-type'));
-          }
-          res.status(upstreamResponse.status).send(body);
-        }
-        return;
-      }
-
-      const upstreamContentType = upstreamResponse.headers.get('content-type') || 'text/event-stream';
-      res.status(upstreamResponse.status);
-      res.setHeader('content-type', upstreamContentType);
-      res.setHeader('cache-control', 'no-cache');
-      res.setHeader('connection', 'keep-alive');
-      res.setHeader('x-accel-buffering', 'no');
-      res.setHeader('x-content-type-options', 'nosniff');
-      if (typeof res.flushHeaders === 'function') {
-        res.flushHeaders();
-      }
-
-      if (registerUiClient) {
-        getUiNotificationClients().add(res);
-      }
-
-      resetIdleTimeout();
-      heartbeatTimer = setInterval(() => {
-        if (res.writableEnded || controller.signal.aborted) {
-          return;
-        }
-        try {
-          res.write(': ping\n\n');
-          resetIdleTimeout();
-        } catch {
-        }
-      }, 30 * 1000);
-
-      const reader = upstreamResponse.body.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            endedBy = endedBy === 'upstream-end' ? 'upstream-finished' : endedBy;
-            break;
-          }
-          if (controller.signal.aborted) {
-            break;
-          }
-          if (value && value.length > 0) {
-            res.write(Buffer.from(value));
-            resetIdleTimeout();
-          }
-        }
-      } finally {
-        try {
-          reader.releaseLock();
-        } catch {
-        }
-      }
-
-      cleanup();
-      if (!res.writableEnded) {
-        res.end();
-      }
-      console.log(`SSE forward ${upstreamPath} closed (${endedBy}) in ${Date.now() - startedAt}ms`);
-    } catch (error) {
-      cleanup();
-      const isTimeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
-      if (!res.headersSent) {
-        res.status(isTimeout ? 504 : 503).json({
-          error: isTimeout ? 'OpenCode SSE forward timed out' : 'OpenCode SSE forward failed',
-        });
-      } else if (!res.writableEnded) {
-        res.end();
-      }
-      console.warn(`SSE forward ${upstreamPath} failed (${endedBy}):`, error?.message || error);
-    }
-  };
-
-  app.get('/api/global/event', async (req, res) => {
-    await forwardSseRequest(req, res, {
-      upstreamPath: '/global/event',
-      registerUiClient: true,
-    });
-  });
-
-  app.get('/api/event', async (req, res) => {
-    const headerDirectory = typeof req.get === 'function' ? req.get('x-opencode-directory') : null;
-    const directoryParam = Array.isArray(req.query.directory)
-      ? req.query.directory[0]
-      : req.query.directory;
-    const resolvedDirectory = headerDirectory || directoryParam || null;
-
-    await forwardSseRequest(req, res, {
-      upstreamPath: '/event',
-      directory: typeof resolvedDirectory === 'string' ? resolvedDirectory : null,
-    });
-  });
 
   app.use('/api', (_req, _res, next) => {
     ensureOpenCodeApiPrefix();
@@ -350,6 +162,94 @@ export const registerOpenCodeProxy = (app, deps) => {
     });
   };
 
+  const forwardSseRequest = async (req, res) => {
+    const abortController = new AbortController();
+    const closeUpstream = () => {
+      try {
+        abortController.abort();
+      } catch {
+      }
+    };
+
+    req.on('close', closeUpstream);
+    req.on('aborted', closeUpstream);
+
+    try {
+      const upstreamPath = getUpstreamPathForRequest(req);
+      const targetUrl = buildOpenCodeUrl(upstreamPath, '');
+      const headers = {
+        ...collectForwardHeaders(req),
+        accept: 'text/event-stream',
+        'cache-control': 'no-cache',
+      };
+
+      const upstreamResponse = await fetch(targetUrl, {
+        method: 'GET',
+        headers,
+        signal: abortController.signal,
+      });
+
+      if (!upstreamResponse.ok || !upstreamResponse.body) {
+        throw new Error(`OpenCode SSE proxy failed with status ${upstreamResponse.status}`);
+      }
+
+      res.status(upstreamResponse.status);
+      for (const [key, value] of upstreamResponse.headers.entries()) {
+        const lowerKey = key.toLowerCase();
+        if (hopByHopResponseHeaders.has(lowerKey)) {
+          continue;
+        }
+        res.setHeader(key, value);
+      }
+      res.setHeader('cache-control', 'no-cache, no-transform');
+      res.setHeader('connection', 'keep-alive');
+      if (typeof res.flushHeaders === 'function') {
+        res.flushHeaders();
+      }
+
+      const reader = upstreamResponse.body.getReader();
+      try {
+        while (!abortController.signal.aborted) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          res.write(Buffer.from(value));
+        }
+      } finally {
+        try {
+          await reader.cancel();
+        } catch {
+        }
+      }
+
+      if (!res.writableEnded) {
+        res.end();
+      }
+    } catch (error) {
+      if (!res.headersSent) {
+        const isAbort = error?.name === 'AbortError' || error?.name === 'TimeoutError';
+        res.status(isAbort ? 499 : 503).json({
+          error: isAbort ? 'OpenCode SSE stream aborted' : 'OpenCode SSE stream unavailable',
+        });
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    } finally {
+      req.off('close', closeUpstream);
+      req.off('aborted', closeUpstream);
+    }
+  };
+
+  app.get('/api/global/event', (req, res) => {
+    ensureOpenCodeApiPrefix();
+    return forwardSseRequest(req, res);
+  });
+
+  app.get('/api/event', (req, res) => {
+    ensureOpenCodeApiPrefix();
+    return forwardSseRequest(req, res);
+  });
+
   const forwardGenericApiRequest = async (req, res) => {
     try {
       const upstreamPath = getUpstreamPathForRequest(req);
@@ -427,10 +327,6 @@ export const registerOpenCodeProxy = (app, deps) => {
   });
 
   app.use('/api', async (req, res, next) => {
-    if (isSseApiPath(req.path)) {
-      return next();
-    }
-
     if (req.method === 'POST' && /\/session\/[^/]+\/message$/.test(req.path || '')) {
       return next();
     }

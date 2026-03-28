@@ -7,6 +7,7 @@ This module provides notification message preparation utilities for the web serv
 - `packages/web/server/lib/notifications/index.js`: public entrypoint imported by `packages/web/server/index.js`.
 - `packages/web/server/lib/notifications/routes.js`: route registration for push, visibility, and session status/attention endpoints.
 - `packages/web/server/lib/notifications/push-runtime.js`: push subscription persistence, VAPID initialization, and UI visibility runtime.
+- `packages/web/server/lib/notifications/emitter-runtime.js`: desktop/stdout + UI SSE notification emission runtime.
 - `packages/web/server/lib/notifications/runtime.js`: trigger runtime for OpenCode event-driven notification fanout.
 - `packages/web/server/lib/notifications/template-runtime.js`: notification template variables, zen-model helpers, and session text/title enrichment runtime.
 - `packages/web/server/lib/notifications/message.js`: helper implementation module.
@@ -57,6 +58,13 @@ This module provides notification message preparation utilities for the web serv
   - `updateUiVisibility(token, visible)`
   - `isAnyUiVisible()`
   - `isUiVisible(token)`
+
+### Emitter runtime API (emitter-runtime.js)
+- `createNotificationEmitterRuntime(dependencies)`: creates runtime for unified notification emission channels.
+- Returned API:
+  - `writeSseEvent(res, payload)`
+  - `emitDesktopNotification(payload)`
+  - `broadcastUiNotification(payload)`
 
 ### Template runtime API (template-runtime.js)
 - `createNotificationTemplateRuntime(dependencies)`: creates shared notification/template + zen helper runtime.
