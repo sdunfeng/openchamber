@@ -22,6 +22,7 @@ import { useUIStore, type MainTab } from '@/stores/useUIStore';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessions, useSessionMessageRecords } from '@/sync/sync-context';
+import { getAllSyncSessions } from '@/sync/sync-refs';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -562,7 +563,13 @@ export const Header: React.FC<HeaderProps> = ({
 
   const currentSession = React.useMemo(() => {
     if (!currentSessionId) return null;
-    return sessions.find((s) => s.id === currentSessionId) ?? null;
+    // Try current directory's store first, then fall back to all child stores.
+    // The sidebar loads sessions globally via SDK, but the header uses
+    // useSessions() which only has the current directory. This fallback
+    // ensures the title/directory show when the session lives elsewhere.
+    return sessions.find((s) => s.id === currentSessionId)
+      ?? getAllSyncSessions().find((s) => s.id === currentSessionId)
+      ?? null;
   }, [currentSessionId, sessions]);
 
   const worktreePath = useSessionUIStore((state) => {
