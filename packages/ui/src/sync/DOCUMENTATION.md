@@ -67,3 +67,48 @@ useDirectorySync((s) => s.permission[sessionID] ?? EMPTY)
 ```
 
 Same applies to `useStreamingStore` — select `.get(key)` not the Map itself.
+
+## Store splitting pattern
+
+### Why split
+
+A single Zustand store with N properties means every subscriber's selector re-evaluates on every state change — even if the change is unrelated to what that subscriber reads. During streaming, `sessionMemoryState` updates ~60/sec. Before the split, all 68+ `useSessionUIStore` subscribers re-evaluated on each update. After splitting into focused stores, only `useViewportStore` subscribers (2-3 components) re-evaluate.
+
+The optimization multiplies with targeted event cloning: fewer new references per event × fewer subscribers per store = dramatically less work per SSE frame.
+
+### The stores
+
+| Store | Owns | When it changes |
+|-------|------|-----------------|
+| `session-ui-store.ts` | Session selection, draft lifecycle, abort, worktree, SDK actions | Session switch, draft open/close |
+| `voice-store.ts` | Voice connection/activity state | Voice toggle |
+| `input-store.ts` | Pending input text, synthetic parts, attached files | User typing, file attach, revert/fork |
+| `selection-store.ts` | Per-session model/agent/variant choices | Model/agent picker |
+| `viewport-store.ts` | Scroll anchors, session memory state, sync status | Streaming, scroll, session switch |
+
+### Rules for new UI state
+
+1. **Never add to `session-ui-store`** unless it's session selection, draft lifecycle, or abort state
+2. **Group by change frequency** — state that changes during streaming (viewport, memory) must not live with state that changes on user action (selections, input)
+3. **Group by subscriber set** — if only 2 components read a value, it should be in a store that only those 2 components subscribe to
+4. **Prefer a new store over growing an existing one** if the new state has different subscribers or change frequency
+5. **Cross-store reads use `.getState()`** — actions in one store that need to read another store call `useOtherStore.getState()` (imperative, no subscription)
+
+### Anti-patterns
+
+```typescript
+// WRONG — stuffing unrelated state into one store
+const useEverythingStore = create(() => ({
+  voiceMode: "idle",
+  scrollAnchor: 0,
+  selectedModel: null,
+  pendingInput: "",
+  // 20 more fields...
+}))
+
+// RIGHT — separate stores by concern + change frequency
+const useVoiceStore = create(() => ({ voiceMode: "idle" }))
+const useViewportStore = create(() => ({ scrollAnchor: 0 }))
+const useSelectionStore = create(() => ({ selectedModel: null }))
+const useInputStore = create(() => ({ pendingInput: "" }))
+```

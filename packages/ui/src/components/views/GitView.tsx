@@ -271,16 +271,14 @@ export const GitView: React.FC = () => {
   const currentIdentity = useGitIdentity(currentDirectory ?? null);
   const isLoading = useGitStore((state) => state.isLoadingStatus);
   const isLogLoading = useGitStore((state) => state.isLoadingLog);
-  const {
-    setActiveDirectory,
-    fetchAll,
-    fetchStatus,
-    fetchBranches,
-    fetchLog,
-    fetchIdentity,
-    prefetchDiffs,
-    setLogMaxCount,
-  } = useGitStore();
+  const setActiveDirectory = useGitStore((state) => state.setActiveDirectory);
+  const fetchAll = useGitStore((state) => state.fetchAll);
+  const fetchStatus = useGitStore((state) => state.fetchStatus);
+  const fetchBranches = useGitStore((state) => state.fetchBranches);
+  const fetchLog = useGitStore((state) => state.fetchLog);
+  const fetchIdentity = useGitStore((state) => state.fetchIdentity);
+  const prefetchDiffs = useGitStore((state) => state.prefetchDiffs);
+  const setLogMaxCount = useGitStore((state) => state.setLogMaxCount);
   const isMobile = useUIStore((state) => state.isMobile);
   const openContextDiff = useUIStore((state) => state.openContextDiff);
   const navigateToDiff = useUIStore((state) => state.navigateToDiff);

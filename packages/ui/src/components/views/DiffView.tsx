@@ -936,7 +936,9 @@ export const DiffView: React.FC<DiffViewProps> = ({
     const isGitRepo = useIsGitRepo(effectiveDirectory ?? null);
     const status = useGitStatus(effectiveDirectory ?? null);
     const isLoadingStatus = useGitStore((state) => state.isLoadingStatus);
-    const { setActiveDirectory, fetchStatus, setDiff } = useGitStore();
+    const setActiveDirectory = useGitStore((state) => state.setActiveDirectory);
+    const fetchStatus = useGitStore((state) => state.fetchStatus);
+    const setDiff = useGitStore((state) => state.setDiff);
 	 
     const [selectedFile, setSelectedFile] = React.useState<string | null>(null);
     const [stackedExpandTarget, setStackedExpandTarget] = React.useState<string | null>(null);
@@ -1741,7 +1743,8 @@ export const useDiffFileCount = (): number => {
     const { git } = useRuntimeAPIs();
     const effectiveDirectory = useEffectiveDirectory();
 
-    const { setActiveDirectory, fetchStatus } = useGitStore();
+    const setActiveDirectory = useGitStore((state) => state.setActiveDirectory);
+    const fetchStatus = useGitStore((state) => state.fetchStatus);
     const fileCount = useGitFileCount(effectiveDirectory ?? null);
 
     React.useEffect(() => {

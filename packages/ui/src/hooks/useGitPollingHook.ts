@@ -25,7 +25,13 @@ export function useGitPolling() {
     const sessions = useSessions();
     const worktreeMap = useSessionUIStore((state) => state.worktreeMetadata);
     const currentStatus = useSessionStatus(currentSessionId ?? '');
-    const { setActiveDirectory, startPolling, setPollingMode, stopPolling, fetchAll, fetchStatus, clearDiffCache } = useGitStore();
+    const setActiveDirectory = useGitStore((state) => state.setActiveDirectory);
+    const startPolling = useGitStore((state) => state.startPolling);
+    const setPollingMode = useGitStore((state) => state.setPollingMode);
+    const stopPolling = useGitStore((state) => state.stopPolling);
+    const fetchAll = useGitStore((state) => state.fetchAll);
+    const fetchStatus = useGitStore((state) => state.fetchStatus);
+    const clearDiffCache = useGitStore((state) => state.clearDiffCache);
     const immediateRefreshTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastImmediateRefreshAtRef = React.useRef<number>(0);
 

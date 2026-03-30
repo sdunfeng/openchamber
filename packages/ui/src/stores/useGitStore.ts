@@ -217,7 +217,8 @@ const hasStatusChanged = (oldStatus: GitStatus | null, newStatus: GitStatus | nu
     }
   }
 
-  if (haveDiffStatsChanged(oldStatus.diffStats, newStatus.diffStats)) return true;
+  // Skip diffStats comparison when light mode omits them (undefined)
+  if (newStatus.diffStats !== undefined && haveDiffStatsChanged(oldStatus.diffStats, newStatus.diffStats)) return true;
 
   return false;
 };
@@ -250,21 +251,24 @@ const getChangedFilePaths = (oldStatus: GitStatus | null, newStatus: GitStatus |
     }
   }
 
-  const oldStats = oldStatus?.diffStats ?? {};
-  const newStats = newStatus.diffStats ?? {};
-  const allStatPaths = new Set<string>([...Object.keys(oldStats), ...Object.keys(newStats)]);
+  // Only compare diffStats when light mode provides them (non-undefined)
+  if (newStatus.diffStats !== undefined) {
+    const oldStats = oldStatus?.diffStats ?? {};
+    const newStats = newStatus.diffStats ?? {};
+    const allStatPaths = new Set<string>([...Object.keys(oldStats), ...Object.keys(newStats)]);
 
-  for (const filePath of allStatPaths) {
-    const oldEntry = oldStats[filePath];
-    const newEntry = newStats[filePath];
+    for (const filePath of allStatPaths) {
+      const oldEntry = oldStats[filePath];
+      const newEntry = newStats[filePath];
 
-    if (!oldEntry || !newEntry) {
-      changed.add(filePath);
-      continue;
-    }
+      if (!oldEntry || !newEntry) {
+        changed.add(filePath);
+        continue;
+      }
 
-    if (oldEntry.insertions !== newEntry.insertions || oldEntry.deletions !== newEntry.deletions) {
-      changed.add(filePath);
+      if (oldEntry.insertions !== newEntry.insertions || oldEntry.deletions !== newEntry.deletions) {
+        changed.add(filePath);
+      }
     }
   }
 

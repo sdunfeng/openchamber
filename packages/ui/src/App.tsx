@@ -124,23 +124,34 @@ const EmbeddedSessionSelectionGate: React.FC<{
   return null;
 };
 
+const SyncOptimisticBridge: React.FC = () => {
+  const sync = useSync();
+  const addRef = React.useRef(sync.optimistic.add);
+  const removeRef = React.useRef(sync.optimistic.remove);
+  addRef.current = sync.optimistic.add;
+  removeRef.current = sync.optimistic.remove;
+
+  React.useEffect(() => {
+    setOptimisticRefs(
+      (input) => addRef.current(input),
+      (input) => removeRef.current(input),
+    );
+  }, []);
+
+  return null;
+};
+
 const SyncAppEffects: React.FC<{
   apis: RuntimeAPIs;
   embeddedBackgroundWorkEnabled: boolean;
 }> = ({ apis, embeddedBackgroundWorkEnabled }) => {
-  // Bridge useSync() optimistic ops to session-actions module refs
-  const sync = useSync();
-  React.useEffect(() => {
-    setOptimisticRefs(sync.optimistic.add, sync.optimistic.remove);
-  }, [sync.optimistic.add, sync.optimistic.remove]);
-
   useGitHubPrBackgroundTracking(embeddedBackgroundWorkEnabled ? apis.github : undefined, apis.git);
   usePwaManifestSync();
   useSessionAutoCleanup({ enabled: embeddedBackgroundWorkEnabled });
   useQueuedMessageAutoSend({ enabled: embeddedBackgroundWorkEnabled });
   useKeyboardShortcuts();
 
-  return null;
+  return <SyncOptimisticBridge />;
 };
 
 function App({ apis }: AppProps) {
