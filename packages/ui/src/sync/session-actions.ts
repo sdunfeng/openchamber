@@ -112,6 +112,31 @@ export async function deleteSession(sessionId: string, _options?: Record<string,
   }
 }
 
+/** Delete a session specifying which directory it lives in. Used by agent groups for cross-directory deletes. */
+export async function deleteSessionInDirectory(sessionId: string, directory: string): Promise<boolean> {
+  if (!_childStores) return false
+  const store = _childStores.ensureChild(directory)
+  const current = store.getState()
+  const sessions = [...current.session]
+  const result = Binary.search(sessions, sessionId, (s) => s.id)
+  let snapshot: Session[] | null = null
+  if (result.found) {
+    snapshot = current.session
+    sessions.splice(result.index, 1)
+    store.setState({ session: sessions })
+  }
+  const ui = useSessionUIStore.getState()
+  if (ui.currentSessionId === sessionId) ui.setCurrentSession(null)
+  try {
+    await sdk().session.delete({ sessionID: sessionId, directory })
+    return true
+  } catch (error) {
+    console.error("[session-actions] deleteSessionInDirectory failed", error)
+    if (snapshot) store.setState({ session: snapshot })
+    return false
+  }
+}
+
 export async function archiveSession(sessionId: string): Promise<boolean> {
   const snapshot = optimisticRemoveSession(sessionId)
   const ui = useSessionUIStore.getState()

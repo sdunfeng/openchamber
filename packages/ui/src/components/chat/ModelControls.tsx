@@ -316,10 +316,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const agents = getVisibleAgents();
     const primaryAgents = React.useMemo(() => agents.filter((agent) => agent.mode === 'primary'), [agents]);
 
-    const {
-        currentSessionId,
-        analyzeAndSaveExternalSessionChoices,
-    } = useSessionUIStore();
+    const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
+    const analyzeAndSaveExternalSessionChoices = useSessionUIStore((s) => s.analyzeAndSaveExternalSessionChoices);
 
     const {
         saveSessionAgentSelection,

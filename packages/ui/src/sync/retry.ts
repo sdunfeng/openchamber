@@ -15,12 +15,19 @@ const TRANSIENT_MESSAGES = [
   "econnrefused",
   "etimedout",
   "socket hang up",
+  "opencode api unavailable",
+  "503",
+  "502",
 ]
 
 function isTransientError(error: unknown): boolean {
   if (!error) return false
   const message = String(error instanceof Error ? error.message : error).toLowerCase()
-  return TRANSIENT_MESSAGES.some((m) => message.includes(m))
+  if (TRANSIENT_MESSAGES.some((m) => message.includes(m))) return true
+  // SDK errors from HTTP 502/503 responses (VS Code bridge returns these before OpenCode is ready)
+  const status = (error as { status?: number })?.status
+  if (status === 502 || status === 503) return true
+  return false
 }
 
 export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {

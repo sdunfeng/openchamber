@@ -103,7 +103,7 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ onClose }) => {
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const sessionMemoryState = useViewportStore((state) => state.sessionMemoryState);
   const sessions = useSessions();
-  const messageRecord = useDirectorySync((state) => state.message ?? {});
+  const messageRecord = useDirectorySync((state) => state.message);
   const totalGitHubRequests = useGitHubPrStatusStore((state) => state.totalRequestCount);
   const [streamSnapshot, setStreamSnapshot] = React.useState<StreamPerfSnapshot>(() => getStreamPerfSnapshot());
   const [vscodeStreamSnapshot, setVsCodeStreamSnapshot] = React.useState<StreamPerfSnapshot>(() => getVsCodeStreamPerfSnapshot());

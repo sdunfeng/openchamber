@@ -16,10 +16,11 @@ import type { Session } from '@opencode-ai/sdk/v2';
  * even when a draft session is being created.
  */
 export const useEffectiveDirectory = (): string | undefined => {
-    const { currentSessionId, newSessionDraft } = useSessionUIStore();
+    const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
+    const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
     const sessions = useSessions();
-    const worktreeMap = useSessionUIStore((state) => state.worktreeMetadata);
-    const { currentDirectory: fallbackDirectory } = useDirectoryStore();
+    const worktreeMap = useSessionUIStore((s) => s.worktreeMetadata);
+    const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
 
     // If we have an active session, use its directory
     if (currentSessionId) {

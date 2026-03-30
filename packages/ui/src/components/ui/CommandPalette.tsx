@@ -21,27 +21,27 @@ import { isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
 import { SETTINGS_PAGE_METADATA, SETTINGS_GROUP_LABELS, type SettingsRuntimeContext } from '@/lib/settings/metadata';
 
 export const CommandPalette: React.FC = () => {
-  const {
-    isCommandPaletteOpen,
-    setCommandPaletteOpen,
-    setHelpDialogOpen,
-    setActiveMainTab,
-    setSettingsDialogOpen,
-    setSettingsPage,
-    setSessionSwitcherOpen,
-    toggleSidebar,
-    toggleRightSidebar,
-    setRightSidebarOpen,
-    setRightSidebarTab,
-    toggleBottomTerminal,
-    setBottomTerminalExpanded,
-    isBottomTerminalExpanded,
-    shortcutOverrides,
-  } = useUIStore();
+  const isCommandPaletteOpen = useUIStore((s) => s.isCommandPaletteOpen);
+  const setCommandPaletteOpen = useUIStore((s) => s.setCommandPaletteOpen);
+  const setHelpDialogOpen = useUIStore((s) => s.setHelpDialogOpen);
+  const setActiveMainTab = useUIStore((s) => s.setActiveMainTab);
+  const setSettingsDialogOpen = useUIStore((s) => s.setSettingsDialogOpen);
+  const setSettingsPage = useUIStore((s) => s.setSettingsPage);
+  const setSessionSwitcherOpen = useUIStore((s) => s.setSessionSwitcherOpen);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
+  const setRightSidebarOpen = useUIStore((s) => s.setRightSidebarOpen);
+  const setRightSidebarTab = useUIStore((s) => s.setRightSidebarTab);
+  const toggleBottomTerminal = useUIStore((s) => s.toggleBottomTerminal);
+  const setBottomTerminalExpanded = useUIStore((s) => s.setBottomTerminalExpanded);
+  const isBottomTerminalExpanded = useUIStore((s) => s.isBottomTerminalExpanded);
+  const shortcutOverrides = useUIStore((s) => s.shortcutOverrides);
 
-  const { openNewSessionDraft, setCurrentSession, getSessionsByDirectory } = useSessionUIStore();;
+  const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
+  const setCurrentSession = useSessionUIStore((s) => s.setCurrentSession);
+  const getSessionsByDirectory = useSessionUIStore((s) => s.getSessionsByDirectory);
 
-  const { currentDirectory } = useDirectoryStore();
+  const currentDirectory = useDirectoryStore((s) => s.currentDirectory);
   const { themeMode, setThemeMode } = useThemeSystem();
 
   const handleClose = () => {

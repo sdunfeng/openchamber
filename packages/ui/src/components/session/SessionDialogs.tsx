@@ -60,10 +60,14 @@ export const SessionDialogs: React.FC = () => {
     const [hasCompletedDirtyCheck, setHasCompletedDirtyCheck] = React.useState(false);
     const [dirtyWorktreePaths, setDirtyWorktreePaths] = React.useState<Set<string>>(new Set());
 
-    const { getWorktreeMetadata, newSessionDraft, setNewSessionDraftTarget, setDraftBootstrapPendingDirectory } = useSessionUIStore();
+    const getWorktreeMetadata = useSessionUIStore((s) => s.getWorktreeMetadata);
+    const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
+    const setNewSessionDraftTarget = useSessionUIStore((s) => s.setNewSessionDraftTarget);
+    const setDraftBootstrapPendingDirectory = useSessionUIStore((s) => s.setDraftBootstrapPendingDirectory);
     const deleteSession = sessionActions.deleteSession;
     const archiveSession = sessionActions.archiveSession;
-    const { deleteSessions, archiveSessions } = useSessionUIStore();
+    const deleteSessions = useSessionUIStore((s) => s.deleteSessions);
+    const archiveSessions = useSessionUIStore((s) => s.archiveSessions);
     const showDeletionDialog = useUIStore((state) => state.showDeletionDialog);
     const setShowDeletionDialog = useUIStore((state) => state.setShowDeletionDialog);
     const { currentDirectory, homeDirectory, isHomeReady } = useDirectoryStore();

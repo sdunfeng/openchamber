@@ -61,9 +61,10 @@ type CleanupOptions = {
   enabled?: boolean;
 };
 
-export const useSessionAutoCleanup = (options?: CleanupOptions) => {
+export const useSessionAutoCleanup = (enabledOrOptions?: boolean | CleanupOptions) => {
+  const options = typeof enabledOrOptions === 'object' ? enabledOrOptions : undefined;
   const autoRun = options?.autoRun !== false;
-  const enabled = options?.enabled ?? true;
+  const enabled = typeof enabledOrOptions === 'boolean' ? enabledOrOptions : (options?.enabled ?? true);
 
   const sessions = useSessions();
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);

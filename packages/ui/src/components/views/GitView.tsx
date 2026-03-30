@@ -225,8 +225,11 @@ export const GitView: React.FC = () => {
   const currentDirectory = useEffectiveDirectory();
   const [worktreeBootstrapStatus, setWorktreeBootstrapStatus] = React.useState<'pending' | 'ready' | 'failed' | null>(null);
   const [isWaitingForGitRefreshAfterBootstrap, setIsWaitingForGitRefreshAfterBootstrap] = React.useState(false);
-  const { currentSessionId, newSessionDraft, setDraftBootstrapPendingDirectory } = useSessionUIStore();
-    const { worktreeMetadata: worktreeMap, availableWorktrees } = useSessionUIStore();;
+  const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
+  const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
+  const setDraftBootstrapPendingDirectory = useSessionUIStore((s) => s.setDraftBootstrapPendingDirectory);
+  const worktreeMap = useSessionUIStore((s) => s.worktreeMetadata);
+  const availableWorktrees = useSessionUIStore((s) => s.availableWorktrees);
   const normalizedCurrentDirectory = normalizePath(currentDirectory);
   const inferredWorktreeMetadata = React.useMemo(() => {
     if (!normalizedCurrentDirectory) {

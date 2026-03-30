@@ -9,6 +9,7 @@ import { reduceGlobalEvent, applyGlobalProject, applyDirectoryEvent } from "./ev
 import { useGlobalSyncStore, type GlobalSyncStore } from "./global-sync-store"
 import { ChildStoreManager, type DirectoryStore } from "./child-store"
 import { bootstrapGlobal, bootstrapDirectory } from "./bootstrap"
+import { retry } from "./retry"
 import { updateStreamingState } from "./streaming"
 import { setActionRefs } from "./session-actions"
 import { setSyncRefs } from "./sync-refs"
@@ -281,37 +282,54 @@ export function SyncProvider(props: {
         const store = childStores.getChild(directory)
         if (!store) return
 
-        const globalState = useGlobalSyncStore.getState()
-        bootstrapDirectory({
-          directory,
-          sdk: props.sdk,
-          getState: () => store.getState(),
-          set: (patch) => {
-            store.setState(patch)
-            // Sync session_status to global store for cross-directory visibility
-            if (patch.session_status) {
-              const current = useGlobalSessionStatusStore.getState().statuses
-              const merged = { ...current, ...patch.session_status }
-              useGlobalSessionStatusStore.setState({ statuses: merged })
-            }
-          },
-          global: {
-            config: globalState.config,
-            projects: globalState.projects,
-            providers: globalState.providers,
-          },
-          loadSessions: async (dir) => {
-            const result = await props.sdk.session.list({
-              directory: dir,
-              roots: true,
-              limit: 50,
-            })
-            const sessions = (result.data ?? [])
-              .filter((s) => !!s?.id)
-              .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-            store.setState({ session: sessions, sessionTotal: sessions.length, limit: Math.max(sessions.length, 50) })
-          },
-        }).finally(() => {
+        const runBootstrap = async (attempt: number) => {
+          const globalState = useGlobalSyncStore.getState()
+          await bootstrapDirectory({
+            directory,
+            sdk: props.sdk,
+            getState: () => store.getState(),
+            set: (patch) => {
+              store.setState(patch)
+              if (patch.session_status) {
+                const current = useGlobalSessionStatusStore.getState().statuses
+                const merged = { ...current, ...patch.session_status }
+                useGlobalSessionStatusStore.setState({ statuses: merged })
+              }
+            },
+            global: {
+              config: globalState.config,
+              projects: globalState.projects,
+              providers: globalState.providers,
+            },
+            loadSessions: (dir) => retry(async () => {
+              const result = await props.sdk.session.list({
+                directory: dir,
+                roots: true,
+                limit: 50,
+              })
+              // SDK returns { error } instead of { data } on non-ok responses (503).
+              // Throw so retry() retries and allSettled marks it as rejected.
+              if ((result as { error?: unknown }).error) {
+                throw new Error("session.list failed: " + String((result as { error?: unknown }).error))
+              }
+              const sessions = (result.data ?? [])
+                .filter((s) => !!s?.id)
+                .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+              store.setState({ session: sessions, sessionTotal: sessions.length, limit: Math.max(sessions.length, 50) })
+            }),
+          })
+
+          // VS Code race: if sessions are still empty after bootstrap, OpenCode
+          // wasn't ready yet (bridge returned 503). Retry a few times.
+          const state = store.getState()
+          if (state.session.length === 0 && attempt < 5) {
+            await new Promise((r) => setTimeout(r, 2000))
+            store.setState({ status: "loading" as const })
+            await runBootstrap(attempt + 1)
+          }
+        }
+
+        runBootstrap(0).finally(() => {
           bootingDirs.delete(directory)
         })
       },

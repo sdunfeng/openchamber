@@ -491,7 +491,7 @@ interface VSCodeHeaderProps {
 }
 
 const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, onNewSession, onSettings, onAgentManager, showMcp, showContextUsage, showRateLimits }) => {
-  const { getCurrentModel } = useConfigStore();
+  const getCurrentModel = useConfigStore((s) => s.getCurrentModel);
   const getContextUsage = useSessionUIStore((state) => state.getContextUsage);
   const quotaResults = useQuotaStore((state) => state.results);
   const fetchAllQuotas = useQuotaStore((state) => state.fetchAllQuotas);

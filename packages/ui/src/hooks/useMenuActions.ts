@@ -48,16 +48,14 @@ type MenuAction =
 export const useMenuActions = (
   onToggleMemoryDebug?: () => void
 ) => {
-  const { openNewSessionDraft } = useSessionUIStore();;
-  const {
-    toggleCommandPalette,
-    toggleHelpDialog,
-    toggleSidebar,
-    setSessionSwitcherOpen,
-    setActiveMainTab,
-    setSettingsDialogOpen,
-    setAboutDialogOpen,
-  } = useUIStore();
+  const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
+  const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
+  const toggleHelpDialog = useUIStore((s) => s.toggleHelpDialog);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const setSessionSwitcherOpen = useUIStore((s) => s.setSessionSwitcherOpen);
+  const setActiveMainTab = useUIStore((s) => s.setActiveMainTab);
+  const setSettingsDialogOpen = useUIStore((s) => s.setSettingsDialogOpen);
+  const setAboutDialogOpen = useUIStore((s) => s.setAboutDialogOpen);
   const { addProject } = useProjectsStore();
   const checkForUpdates = useUpdateStore((state) => state.checkForUpdates);
   const { requestAccess, startAccessing } = useFileSystemAccess();

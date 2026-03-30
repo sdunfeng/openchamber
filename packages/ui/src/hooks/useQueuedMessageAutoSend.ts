@@ -96,10 +96,10 @@ const resolveSessionSendConfig = (sessionId: string) => {
   };
 };
 
-export function useQueuedMessageAutoSend(options?: { enabled?: boolean }) {
-  const enabled = options?.enabled ?? true;
+export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?: boolean }) {
+  const enabled = typeof enabledOrOptions === 'boolean' ? enabledOrOptions : (enabledOrOptions?.enabled ?? true);
   const queuedMessages = useMessageQueueStore((state) => state.queuedMessages);
-  const sessionStatusRecord = useDirectorySync((state) => state.session_status ?? {});
+  const sessionStatusRecord = useDirectorySync((state) => state.session_status);
 
   const inFlightSessionsRef = React.useRef<Set<string>>(new Set());
   const previousStatusRef = React.useRef<Map<string, SessionStatusType>>(new Map());
@@ -165,8 +165,9 @@ export function useQueuedMessageAutoSend(options?: { enabled?: boolean }) {
       }
     };
 
+    const statusRecord = sessionStatusRecord ?? {};
     const nextStatusMap = new Map(previousStatusRef.current);
-    for (const [sessionId, status] of Object.entries(sessionStatusRecord)) {
+    for (const [sessionId, status] of Object.entries(statusRecord)) {
       if (status) {
         nextStatusMap.set(sessionId, status.type as SessionStatusType);
       }
@@ -174,7 +175,7 @@ export function useQueuedMessageAutoSend(options?: { enabled?: boolean }) {
 
     const queueEntries = Object.entries(queuedMessages);
     queueEntries.forEach(([sessionId, queue]) => {
-      const currentStatusType = (sessionStatusRecord[sessionId]?.type ?? 'idle') as SessionStatusType;
+      const currentStatusType = (statusRecord[sessionId]?.type ?? 'idle') as SessionStatusType;
       const previousStatusType = previousStatusRef.current.get(sessionId);
       const becameIdle =
         (previousStatusType === 'busy' || previousStatusType === 'retry')

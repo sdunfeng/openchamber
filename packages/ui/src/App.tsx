@@ -48,7 +48,8 @@ const CLI_MISSING_ERROR_REGEX =
 const CLI_ONBOARDING_HEALTH_POLL_MS = 1500;
 
 const AboutDialogWrapper: React.FC = () => {
-  const { isAboutDialogOpen, setAboutDialogOpen } = useUIStore();
+  const isAboutDialogOpen = useUIStore((s) => s.isAboutDialogOpen);
+  const setAboutDialogOpen = useUIStore((s) => s.setAboutDialogOpen);
   return (
     <AboutDialog
       open={isAboutDialogOpen}
@@ -141,26 +142,30 @@ const SyncOptimisticBridge: React.FC = () => {
   return null;
 };
 
-const SyncAppEffects: React.FC<{
+function SyncAppEffects({ apis, embeddedBackgroundWorkEnabled }: {
   apis: RuntimeAPIs;
   embeddedBackgroundWorkEnabled: boolean;
-}> = ({ apis, embeddedBackgroundWorkEnabled }) => {
-  useGitHubPrBackgroundTracking(embeddedBackgroundWorkEnabled ? apis.github : undefined, apis.git);
+}) {
+  const githubApi = embeddedBackgroundWorkEnabled ? apis.github : undefined;
+  useGitHubPrBackgroundTracking(githubApi, apis.git);
   usePwaManifestSync();
-  useSessionAutoCleanup({ enabled: embeddedBackgroundWorkEnabled });
-  useQueuedMessageAutoSend({ enabled: embeddedBackgroundWorkEnabled });
+  useSessionAutoCleanup(embeddedBackgroundWorkEnabled);
+  useQueuedMessageAutoSend(embeddedBackgroundWorkEnabled);
   useKeyboardShortcuts();
 
   return <SyncOptimisticBridge />;
-};
+}
 
 function App({ apis }: AppProps) {
-  const { initializeApp, isInitialized, isConnected } = useConfigStore();
+  const initializeApp = useConfigStore((s) => s.initializeApp);
+  const isInitialized = useConfigStore((s) => s.isInitialized);
+  const isConnected = useConfigStore((s) => s.isConnected);
   const providersCount = useConfigStore((state) => state.providers.length);
   const agentsCount = useConfigStore((state) => state.agents.length);
   const loadProviders = useConfigStore((state) => state.loadProviders);
   const loadAgents = useConfigStore((state) => state.loadAgents);
-  const { error, clearError } = useSessionUIStore();
+  const error = useSessionUIStore((s) => s.error);
+  const clearError = useSessionUIStore((s) => s.clearError);
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const setDirectory = useDirectoryStore((state) => state.setDirectory);
   const isSwitchingDirectory = useDirectoryStore((state) => state.isSwitchingDirectory);

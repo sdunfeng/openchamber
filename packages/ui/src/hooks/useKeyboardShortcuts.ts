@@ -12,25 +12,26 @@ import { showOpenCodeStatus } from '@/lib/openCodeStatus';
 import { eventMatchesShortcut, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 
 export const useKeyboardShortcuts = () => {
-  const { openNewSessionDraft, armAbortPrompt, clearAbortPrompt, currentSessionId } = useSessionUIStore();
+  const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
+  const armAbortPrompt = useSessionUIStore((s) => s.armAbortPrompt);
+  const clearAbortPrompt = useSessionUIStore((s) => s.clearAbortPrompt);
+  const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
     const abortCurrentOperation = sessionActions.abortCurrentOperation;;
-  const {
-    toggleCommandPalette,
-    toggleHelpDialog,
-    toggleSidebar,
-    toggleRightSidebar,
-    setRightSidebarOpen,
-    setRightSidebarTab,
-    toggleBottomTerminal,
-    setBottomTerminalExpanded,
-    isMobile,
-    setSessionSwitcherOpen,
-    setActiveMainTab,
-    setSettingsDialogOpen,
-    setModelSelectorOpen,
-    toggleExpandedInput,
-    shortcutOverrides,
-  } = useUIStore();
+  const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
+  const toggleHelpDialog = useUIStore((s) => s.toggleHelpDialog);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
+  const setRightSidebarOpen = useUIStore((s) => s.setRightSidebarOpen);
+  const setRightSidebarTab = useUIStore((s) => s.setRightSidebarTab);
+  const toggleBottomTerminal = useUIStore((s) => s.toggleBottomTerminal);
+  const setBottomTerminalExpanded = useUIStore((s) => s.setBottomTerminalExpanded);
+  const isMobile = useUIStore((s) => s.isMobile);
+  const setSessionSwitcherOpen = useUIStore((s) => s.setSessionSwitcherOpen);
+  const setActiveMainTab = useUIStore((s) => s.setActiveMainTab);
+  const setSettingsDialogOpen = useUIStore((s) => s.setSettingsDialogOpen);
+  const setModelSelectorOpen = useUIStore((s) => s.setModelSelectorOpen);
+  const toggleExpandedInput = useUIStore((s) => s.toggleExpandedInput);
+  const shortcutOverrides = useUIStore((s) => s.shortcutOverrides);
   const { themeMode, setThemeMode } = useThemeSystem();
   const { working } = useAssistantStatus();
   const abortPrimedUntilRef = React.useRef<number | null>(null);

@@ -25,7 +25,7 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
 
   const projectPath = projectRefProp?.path ?? activeProject?.path ?? null;
 
-  const { getWorktreeMetadata } = useSessionUIStore();
+  const getWorktreeMetadata = useSessionUIStore((s) => s.getWorktreeMetadata);
     const sessions = useSessions();
   const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
 

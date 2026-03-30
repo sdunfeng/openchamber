@@ -56,7 +56,7 @@ export const UnifiedControlsDrawer: React.FC<UnifiedControlsDrawerProps> = ({
     } = useConfigStore();
     const { addRecentModel, addRecentEffort, recentEfforts } = useUIStore();
     const { recentModelsList } = useModelLists();
-    const { currentSessionId } = useSessionUIStore();
+    const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
     const { saveAgentModelForSession, saveAgentModelVariantForSession } = useSelectionStore();
     const sessionAgentName = useContextStore((state) =>
         currentSessionId ? state.getSessionAgentSelection(currentSessionId) : null
