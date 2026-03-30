@@ -79,7 +79,7 @@ export async function bootstrapDirectory(input: {
   if (state.provider.all.length === 0 && g.providers.all.length > 0) {
     set({ provider: g.providers as State["provider"] })
   }
-  if (Object.keys(state.config).length === 0 && Object.keys(g.config).length > 0) {
+  if (Object.keys(state.config ?? {}).length === 0 && Object.keys(g.config ?? {}).length > 0) {
     set({ config: g.config as State["config"] })
   }
   if (loading) set({ status: "partial" })

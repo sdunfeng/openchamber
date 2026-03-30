@@ -153,7 +153,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = React.useState(false);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const todosRecord = useDirectorySync((state) => state.todo);
+  const todosRecord = useDirectorySync((state) => state.todo ?? {});
   const todos: TodoItem[] = React.useMemo(
     () => (currentSessionId ? todosRecord[currentSessionId] ?? EMPTY_TODOS : EMPTY_TODOS),
     [todosRecord, currentSessionId],

@@ -218,7 +218,7 @@ export const AgentsPage: React.FC = () => {
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory ?? null);
   const [toolIds, setToolIds] = React.useState<string[]>([]);
 
-  const permissionsBySession = useDirectorySync((state) => state.permission);
+  const permissionsBySession = useDirectorySync((state) => state.permission ?? {});
 
   React.useEffect(() => {
     let cancelled = false;

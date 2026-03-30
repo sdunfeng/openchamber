@@ -98,7 +98,7 @@ const resolveSessionSendConfig = (sessionId: string) => {
 export function useQueuedMessageAutoSend(options?: { enabled?: boolean }) {
   const enabled = options?.enabled ?? true;
   const queuedMessages = useMessageQueueStore((state) => state.queuedMessages);
-  const sessionStatusRecord = useDirectorySync((state) => state.session_status);
+  const sessionStatusRecord = useDirectorySync((state) => state.session_status ?? {});
 
   const inFlightSessionsRef = React.useRef<Set<string>>(new Set());
   const previousStatusRef = React.useRef<Map<string, SessionStatusType>>(new Map());
