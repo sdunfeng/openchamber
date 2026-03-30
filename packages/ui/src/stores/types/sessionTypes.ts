@@ -255,7 +255,7 @@ export interface SessionStore {
     clearError: () => void;
     getSessionsByDirectory: (directory: string) => Session[];
     getDirectoryForSession: (sessionId: string) => string | null;
-    getLastMessageModel: (sessionId: string) => { providerID?: string; modelID?: string } | null;
+    getLastUserChoice: (sessionId: string) => { agent?: string; providerID?: string; modelID?: string; variant?: string } | null;
     getCurrentAgent: (sessionId: string) => string | undefined;
     syncMessages: (
       sessionId: string,
@@ -283,8 +283,6 @@ export interface SessionStore {
 
     saveAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string, variant: string | undefined) => void;
     getAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string) => string | undefined;
- 
-    analyzeAndSaveExternalSessionChoices: (sessionId: string, agents: Array<{ name: string; [key: string]: unknown }>) => Promise<Map<string, { providerId: string; modelId: string; timestamp: number }>>;
 
 
     isOpenChamberCreatedSession: (sessionId: string) => boolean;

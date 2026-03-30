@@ -225,9 +225,8 @@ export type SessionUIState = {
   // Data access helpers (read from sync)
   getSessionsByDirectory: (directory: string) => Session[]
   getDirectoryForSession: (sessionId: string) => string | null
-  getLastMessageModel: (sessionId: string) => { providerID: string; modelID: string } | null
+  getLastUserChoice: (sessionId: string) => { agent?: string; providerID?: string; modelID?: string; variant?: string } | null
   getCurrentAgent: (sessionId: string) => string | undefined
-  analyzeAndSaveExternalSessionChoices: (sessionId: string, agents: unknown[]) => Promise<Map<string, { timestamp: number; providerId: string; modelId: string }>>
   debugSessionMessages: (sessionId: string) => Promise<void>
   pollForTokenUpdates: () => void
   setSessionDirectory: (sessionId: string, directory: string | null) => void
@@ -1093,16 +1092,33 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     return resolveDirectoryKey(session)
   },
 
-  getLastMessageModel: (sessionId) => {
-    const msgs = getSyncMessages(sessionId)
-    if (msgs.length === 0) return null
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i]
-      if (m?.role === "assistant") {
-        if (m.providerID || m.modelID) {
-          return { providerID: m.providerID, modelID: m.modelID }
-        }
+  getLastUserChoice: (sessionId) => {
+    const directory = get().getDirectoryForSession(sessionId) ?? undefined
+    const messages = getSyncMessages(sessionId, directory)
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i] as Message & {
+        model?: { providerID?: string; modelID?: string }
+        variant?: string
+        mode?: string
       }
+      if (message.role !== "user") {
+        continue
+      }
+
+      const providerID = typeof message.model?.providerID === "string" && message.model.providerID.trim().length > 0
+        ? message.model.providerID
+        : undefined
+      const modelID = typeof message.model?.modelID === "string" && message.model.modelID.trim().length > 0
+        ? message.model.modelID
+        : undefined
+      const agent = typeof message.agent === "string" && message.agent.trim().length > 0
+        ? message.agent
+        : (typeof message.mode === "string" && message.mode.trim().length > 0 ? message.mode : undefined)
+      const variant = typeof message.variant === "string" && message.variant.trim().length > 0
+        ? message.variant
+        : undefined
+
+      return { agent, providerID, modelID, variant }
     }
     return null
   },
@@ -1110,8 +1126,6 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
   getCurrentAgent: (sessionId) => {
     return useSelectionStore.getState().sessionAgentSelections.get(sessionId) ?? undefined
   },
-
-  analyzeAndSaveExternalSessionChoices: async () => new Map(),
 
   debugSessionMessages: async (sessionId) => {
     const msgs = getSyncMessages(sessionId)
