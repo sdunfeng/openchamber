@@ -465,9 +465,9 @@ interface ConfigStore {
     settingsAutoCreateWorktree: boolean;
     settingsGitmojiEnabled: boolean;
     settingsZenModel: string | undefined;
-    // Voice provider preference ('browser', 'openai', or 'say' for macOS)
-    voiceProvider: 'browser' | 'openai' | 'say';
-    setVoiceProvider: (provider: 'browser' | 'openai' | 'say') => void;
+    // Voice provider preference ('browser', 'openai', 'openai-compatible', or 'say' for macOS)
+    voiceProvider: 'browser' | 'openai' | 'openai-compatible' | 'say';
+    setVoiceProvider: (provider: 'browser' | 'openai' | 'openai-compatible' | 'say') => void;
     // TTS settings
     speechRate: number;
     speechPitch: number;
@@ -476,6 +476,9 @@ interface ConfigStore {
     browserVoice: string;
     openaiVoice: string;
     openaiApiKey: string;
+    openaiCompatibleUrl: string;
+    openaiCompatibleVoice: string;
+    openaiCompatibleTtsModel: string;
     showMessageTTSButtons: boolean;
     voiceModeEnabled: boolean;
     // Summarization settings
@@ -490,6 +493,9 @@ interface ConfigStore {
     setBrowserVoice: (voice: string) => void;
     setOpenaiVoice: (voice: string) => void;
     setOpenaiApiKey: (apiKey: string) => void;
+    setOpenaiCompatibleUrl: (url: string) => void;
+    setOpenaiCompatibleVoice: (voice: string) => void;
+    setOpenaiCompatibleTtsModel: (model: string) => void;
     setShowMessageTTSButtons: (show: boolean) => void;
     setVoiceModeEnabled: (enabled: boolean) => void;
     setSummarizeMessageTTS: (enabled: boolean) => void;
@@ -567,7 +573,7 @@ export const useConfigStore = create<ConfigStore>()(
                 voiceProvider: (() => {
                     if (typeof window !== 'undefined') {
                         const saved = localStorage.getItem('voiceProvider');
-                        if (saved === 'openai' || saved === 'browser' || saved === 'say') return saved;
+                        if (saved === 'openai' || saved === 'browser' || saved === 'say' || saved === 'openai-compatible') return saved;
                     }
                     return 'browser';
                 })(),
@@ -633,6 +639,30 @@ export const useConfigStore = create<ConfigStore>()(
                         if (saved) return saved;
                     }
                     return '';
+                })(),
+                // OpenAI-compatible custom server URL
+                openaiCompatibleUrl: (() => {
+                    if (typeof window !== 'undefined') {
+                        const saved = localStorage.getItem('openaiCompatibleUrl');
+                        if (saved) return saved;
+                    }
+                    return '';
+                })(),
+                // OpenAI-compatible custom server voice
+                openaiCompatibleVoice: (() => {
+                    if (typeof window !== 'undefined') {
+                        const saved = localStorage.getItem('openaiCompatibleVoice');
+                        if (saved) return saved;
+                    }
+                    return 'af_sky';
+                })(),
+                // OpenAI-compatible custom server TTS model
+                openaiCompatibleTtsModel: (() => {
+                    if (typeof window !== 'undefined') {
+                        const saved = localStorage.getItem('openaiCompatibleTtsModel');
+                        if (saved && saved !== 'speaches-ai/Kokoro-82M-v1.0-ONNX') return saved;
+                    }
+                    return 'kokoro';
                 })(),
                 // Show TTS buttons on messages - disabled by default until user enables it
                 showMessageTTSButtons: (() => {
@@ -1602,7 +1632,7 @@ export const useConfigStore = create<ConfigStore>()(
                     });
                 },
 
-                setVoiceProvider: (provider: 'browser' | 'openai' | 'say') => {
+                setVoiceProvider: (provider: 'browser' | 'openai' | 'openai-compatible' | 'say') => {
                     set({ voiceProvider: provider });
                     if (typeof window !== 'undefined') {
                         localStorage.setItem('voiceProvider', provider);
@@ -1658,6 +1688,27 @@ export const useConfigStore = create<ConfigStore>()(
                     set({ openaiApiKey: apiKey });
                     if (typeof window !== 'undefined') {
                         localStorage.setItem('openaiApiKey', apiKey);
+                    }
+                },
+
+                setOpenaiCompatibleUrl: (url: string) => {
+                    set({ openaiCompatibleUrl: url });
+                    if (typeof window !== 'undefined') {
+                        localStorage.setItem('openaiCompatibleUrl', url);
+                    }
+                },
+
+                setOpenaiCompatibleVoice: (voice: string) => {
+                    set({ openaiCompatibleVoice: voice });
+                    if (typeof window !== 'undefined') {
+                        localStorage.setItem('openaiCompatibleVoice', voice);
+                    }
+                },
+
+                setOpenaiCompatibleTtsModel: (model: string) => {
+                    set({ openaiCompatibleTtsModel: model });
+                    if (typeof window !== 'undefined') {
+                        localStorage.setItem('openaiCompatibleTtsModel', model);
                     }
                 },
 
