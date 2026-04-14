@@ -192,13 +192,22 @@ export type SessionTargetOption = {
   value: string;
   label: string;
   kind: 'root' | 'worktree';
+  /** True when this worktree is in pending bootstrap state. */
+  pending?: boolean;
 };
 
-/** Build labeled target options for the new-session draft selector. */
+/** Build labeled target options for the new-session draft selector.
+ *
+ * Distinguishes:
+ * - root: the project root / primary worktree
+ * - worktree: an isolated secondary worktree
+ * - pending: a worktree that is being bootstrapped (marked with pending=true)
+ */
 export function buildSessionTargetOptions(input: {
   projectRoot: string;
   rootBranch: string;
   worktrees: Array<{ path: string; branch: string; label: string; projectDirectory: string }>;
+  pendingBootstrapDirectory?: string | null;
 }): SessionTargetOption[] {
   const options: SessionTargetOption[] = [];
 
@@ -210,13 +219,19 @@ export function buildSessionTargetOptions(input: {
     });
   }
 
+  const pendingNormalized = input.pendingBootstrapDirectory
+    ? normalizePath(input.pendingBootstrapDirectory)
+    : null;
+
   for (const wt of input.worktrees) {
     const normalizedPath = normalizePath(wt.path);
     if (normalizedPath === input.projectRoot) continue;
+    const isPending = normalizedPath === pendingNormalized;
     options.push({
       value: normalizedPath,
       label: wt.branch?.trim() || wt.label || normalizedPath.split('/').pop() || normalizedPath,
       kind: 'worktree',
+      pending: isPending || undefined,
     });
   }
 

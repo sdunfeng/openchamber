@@ -395,4 +395,24 @@ describe('buildSessionTargetOptions', () => {
     expect(options).toHaveLength(1);
     expect(options[0]?.kind).toBe('root');
   });
+
+  test('marks pending bootstrap worktree distinctly', () => {
+    const options = buildSessionTargetOptions({
+      projectRoot: '/repo',
+      rootBranch: 'main',
+      worktrees: [
+        { path: '/repo/worktrees/feat-a', branch: 'feat-a', label: 'feat-a', projectDirectory: '/repo' },
+        { path: '/repo/worktrees/feat-b', branch: 'feat-b', label: 'feat-b', projectDirectory: '/repo' },
+      ],
+      pendingBootstrapDirectory: '/repo/worktrees/feat-b',
+    });
+
+    const root = options.find((o) => o.kind === 'root');
+    const pending = options.find((o) => o.value === '/repo/worktrees/feat-b');
+    const nonPending = options.find((o) => o.value === '/repo/worktrees/feat-a');
+
+    expect(root?.pending).toBeUndefined();
+    expect(pending?.pending).toBe(true);
+    expect(nonPending?.pending).toBeUndefined();
+  });
 });
