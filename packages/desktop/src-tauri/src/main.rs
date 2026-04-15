@@ -17,7 +17,7 @@ use std::{
     net::TcpListener,
     process::Command,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU32, AtomicU64, Ordering},
         Mutex,
     },
     time::Duration,
@@ -165,22 +165,190 @@ const GITHUB_FEATURE_REQUEST_URL: &str =
 const DISCORD_INVITE_URL: &str = "https://discord.gg/ZYRSdnwwKA";
 
 static QUIT_CONFIRMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static QUIT_CONFIRMATION_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static QUIT_RISK_HAS_ENABLED_SCHEDULED_TASKS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static QUIT_RISK_HAS_RUNNING_SCHEDULED_TASKS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static QUIT_RISK_ENABLED_SCHEDULED_TASKS_COUNT: AtomicU32 = AtomicU32::new(0);
+static QUIT_RISK_RUNNING_SCHEDULED_TASKS_COUNT: AtomicU32 = AtomicU32::new(0);
+static QUIT_RISK_HAS_ACTIVE_TUNNEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static QUIT_RISK_POLLER_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+const QUIT_RISK_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+#[cfg(target_os = "macos")]
+fn should_require_quit_confirmation() -> bool {
+    use std::sync::atomic::Ordering;
+
+    QUIT_RISK_HAS_ACTIVE_TUNNEL.load(Ordering::Relaxed)
+        || QUIT_RISK_HAS_RUNNING_SCHEDULED_TASKS.load(Ordering::Relaxed)
+        || QUIT_RISK_HAS_ENABLED_SCHEDULED_TASKS.load(Ordering::Relaxed)
+}
+
+#[cfg(target_os = "macos")]
+fn quit_confirmation_message() -> String {
+    use std::sync::atomic::Ordering;
+
+    let has_active_tunnel = QUIT_RISK_HAS_ACTIVE_TUNNEL.load(Ordering::Relaxed);
+    let running_tasks_count = QUIT_RISK_RUNNING_SCHEDULED_TASKS_COUNT.load(Ordering::Relaxed);
+    let enabled_tasks_count = QUIT_RISK_ENABLED_SCHEDULED_TASKS_COUNT.load(Ordering::Relaxed);
+
+    let mut reasons: Vec<String> = Vec::new();
+    if has_active_tunnel {
+        reasons.push("an active tunnel".to_string());
+    }
+    if running_tasks_count > 0 {
+        reasons.push(format!(
+            "{} running scheduled task{}",
+            running_tasks_count,
+            if running_tasks_count == 1 { "" } else { "s" }
+        ));
+    }
+    if enabled_tasks_count > 0 {
+        reasons.push(format!(
+            "{} enabled scheduled task{}",
+            enabled_tasks_count,
+            if enabled_tasks_count == 1 { "" } else { "s" }
+        ));
+    }
+
+    if reasons.is_empty() {
+        "Background processes (sidecar, SSH sessions) will be stopped.".to_string()
+    } else {
+        format!(
+            "OpenChamber detected {}. Quitting now will stop sidecar/background processes and may interrupt pending work.",
+            reasons.join(", ")
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+const NS_TERMINATE_CANCEL: isize = 0;
+#[cfg(target_os = "macos")]
+const NS_TERMINATE_NOW: isize = 1;
+
+#[cfg(target_os = "macos")]
+unsafe extern "C-unwind" fn application_should_terminate_with_confirmation(
+    _: &objc2::runtime::AnyObject,
+    _: objc2::runtime::Sel,
+    _: *mut std::ffi::c_void,
+) -> isize {
+    use std::sync::atomic::Ordering;
+
+    if QUIT_CONFIRMED.load(Ordering::SeqCst) {
+        return NS_TERMINATE_NOW;
+    }
+
+    if !should_require_quit_confirmation() {
+        QUIT_CONFIRMED.store(true, Ordering::SeqCst);
+        return NS_TERMINATE_NOW;
+    }
+
+    if QUIT_CONFIRMATION_PENDING.swap(true, Ordering::SeqCst) {
+        return NS_TERMINATE_CANCEL;
+    }
+
+    let message = quit_confirmation_message();
+    let confirmed = matches!(
+        rfd::MessageDialog::new()
+            .set_title("Quit OpenChamber?")
+            .set_description(&message)
+            .set_level(rfd::MessageLevel::Warning)
+            .set_buttons(rfd::MessageButtons::OkCancel)
+            .show(),
+        rfd::MessageDialogResult::Ok | rfd::MessageDialogResult::Yes
+    );
+
+    QUIT_CONFIRMATION_PENDING.store(false, Ordering::SeqCst);
+
+    if confirmed {
+        QUIT_CONFIRMED.store(true, Ordering::SeqCst);
+        NS_TERMINATE_NOW
+    } else {
+        NS_TERMINATE_CANCEL
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_quit_confirmation_hook() {
+    use objc2::ffi;
+    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+    use std::ffi::CStr;
+
+    unsafe {
+        let Some(delegate_class) = AnyClass::get(CStr::from_bytes_with_nul_unchecked(
+            b"TaoAppDelegateParent\0",
+        )) else {
+            log::warn!("[desktop] TaoAppDelegateParent class not found; dock Quit confirmation hook skipped");
+            return;
+        };
+
+        let selector = Sel::register(c"applicationShouldTerminate:");
+        if !ffi::class_getInstanceMethod(delegate_class, selector).is_null() {
+            return;
+        }
+
+        let imp: Imp = std::mem::transmute(
+            application_should_terminate_with_confirmation
+                as unsafe extern "C-unwind" fn(&AnyObject, Sel, *mut std::ffi::c_void) -> isize,
+        );
+
+        let added = ffi::class_addMethod(
+            delegate_class as *const _ as *mut _,
+            selector,
+            imp,
+            b"q@:@\0".as_ptr().cast(),
+        );
+
+        if !added.as_bool() {
+            log::warn!("[desktop] failed to install applicationShouldTerminate hook");
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_macos_quit_confirmation_hook() {}
 
 #[cfg(target_os = "macos")]
 fn request_quit_with_confirmation(app: &tauri::AppHandle) {
     use std::sync::atomic::Ordering;
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
+    if !should_require_quit_confirmation() {
+        QUIT_CONFIRMED.store(true, Ordering::SeqCst);
+        app.exit(0);
+        return;
+    }
+
+    if QUIT_CONFIRMATION_PENDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    // When app has only hidden windows (common after closing last window),
+    // ensure at least one window is visible so native dialog reliably appears.
+    let windows = app.webview_windows();
+    let has_visible = windows.values().any(|w| w.is_visible().unwrap_or(false));
+    if !has_visible {
+        if let Some(hidden) = windows.values().find(|w| !w.is_visible().unwrap_or(true)) {
+            let _ = hidden.show();
+            let _ = hidden.set_focus();
+        }
+    }
+
+    let message = quit_confirmation_message();
     let handle = app.clone();
     app.dialog()
-        .message(
-            "Background processes (sidecar, SSH sessions) will be stopped \
-             and any scheduled tasks will not be completed.",
-        )
+        .message(message)
         .title("Quit OpenChamber?")
         .buttons(MessageDialogButtons::OkCancel)
         .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
         .show(move |confirmed| {
+            QUIT_CONFIRMATION_PENDING.store(false, Ordering::SeqCst);
             if confirmed {
                 QUIT_CONFIRMED.store(true, Ordering::SeqCst);
                 handle.exit(0);
@@ -1944,6 +2112,93 @@ async fn wait_for_local_opencode_ready_with(
 
     last_probe
 }
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduledTasksQuitRiskResponse {
+    has_enabled_scheduled_tasks: bool,
+    has_running_scheduled_tasks: bool,
+    #[serde(default)]
+    enabled_scheduled_tasks_count: u32,
+    #[serde(default)]
+    running_scheduled_tasks_count: u32,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TunnelStatusResponse {
+    active: bool,
+}
+
+#[cfg(target_os = "macos")]
+async fn refresh_quit_risk_flags(local_base_url: &str) {
+    use std::sync::atomic::Ordering;
+
+    let trimmed = local_base_url.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return,
+    };
+
+    let scheduled_url = format!("{trimmed}/api/openchamber/scheduled-tasks/status");
+    let tunnel_url = format!("{trimmed}/api/openchamber/tunnel/status");
+
+    let scheduled_future = client.get(scheduled_url).send();
+    let tunnel_future = client.get(tunnel_url).send();
+    let (scheduled_result, tunnel_result) = tokio::join!(scheduled_future, tunnel_future);
+
+    if let Ok(response) = scheduled_result {
+        if response.status().is_success() {
+            if let Ok(payload) = response.json::<ScheduledTasksQuitRiskResponse>().await {
+                let enabled_count = payload.enabled_scheduled_tasks_count;
+                let running_count = payload.running_scheduled_tasks_count;
+                QUIT_RISK_ENABLED_SCHEDULED_TASKS_COUNT.store(enabled_count, Ordering::Relaxed);
+                QUIT_RISK_RUNNING_SCHEDULED_TASKS_COUNT.store(running_count, Ordering::Relaxed);
+                QUIT_RISK_HAS_ENABLED_SCHEDULED_TASKS
+                    .store(payload.has_enabled_scheduled_tasks || enabled_count > 0, Ordering::Relaxed);
+                QUIT_RISK_HAS_RUNNING_SCHEDULED_TASKS
+                    .store(payload.has_running_scheduled_tasks || running_count > 0, Ordering::Relaxed);
+            }
+        }
+    }
+
+    if let Ok(response) = tunnel_result {
+        if response.status().is_success() {
+            if let Ok(payload) = response.json::<TunnelStatusResponse>().await {
+                QUIT_RISK_HAS_ACTIVE_TUNNEL.store(payload.active, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn start_quit_risk_poller(local_base_url: String) {
+    use std::sync::atomic::Ordering;
+
+    if QUIT_RISK_POLLER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            refresh_quit_risk_flags(&local_base_url).await;
+            tokio::time::sleep(QUIT_RISK_POLL_INTERVAL).await;
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn start_quit_risk_poller(_local_base_url: String) {}
 
 /// Uses the same probe_with_retry policy as startup/new-window (soft + hard)
 /// so that first-launch/recovery remote connect accepts slow-but-valid hosts.
@@ -3789,6 +4044,7 @@ fn main() {
                 if let Some(state) = handle.try_state::<SidecarState>() {
                     *state.url.lock().expect("sidecar url mutex") = Some(local_url.clone());
                 }
+                start_quit_risk_poller(local_url.clone());
 
                 let local_origin = url::Url::parse(&local_ui_url)
                     .ok()
@@ -3890,12 +4146,16 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application");
 
+    install_macos_quit_confirmation_hook();
+
     app.run(|app_handle, event| {
         match event {
             tauri::RunEvent::ExitRequested { api, .. } => {
                 use std::sync::atomic::Ordering;
                 if !QUIT_CONFIRMED.load(Ordering::SeqCst) {
                     api.prevent_exit();
+                    #[cfg(target_os = "macos")]
+                    request_quit_with_confirmation(app_handle);
                     return;
                 }
                 if let Some(state) = app_handle.try_state::<DesktopSshManagerState>() {
