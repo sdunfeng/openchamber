@@ -12,17 +12,10 @@ import { RiAddLine, RiCloseLine, RiCalendarLine, RiArrowLeftSLine, RiArrowRightS
 import { ModelSelector } from '@/components/sections/agents/ModelSelector';
 import { AgentSelector } from '@/components/sections/commands/AgentSelector';
 import { useConfigStore } from '@/stores/useConfigStore';
+import { useUIStore } from '@/stores/useUIStore';
 import type { ScheduledTask } from '@/lib/scheduledTasksApi';
 
-const WEEKDAY_LABELS: Array<{ value: number; label: string }> = [
-  { value: 0, label: 'Sun' },
-  { value: 1, label: 'Mon' },
-  { value: 2, label: 'Tue' },
-  { value: 3, label: 'Wed' },
-  { value: 4, label: 'Thu' },
-  { value: 5, label: 'Fri' },
-  { value: 6, label: 'Sat' },
-];
+const WEEKDAY_INDEXES = [0, 1, 2, 3, 4, 5, 6] as const;
 
 const TIMEZONE_OPTIONS = (() => {
   if (typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function') {
@@ -90,17 +83,18 @@ const shiftMonth = (date: Date, delta: number): Date => {
   return new Date(date.getFullYear(), date.getMonth() + delta, 1);
 };
 
-const getCalendarCells = (monthDate: Date): Array<{ date: Date; inCurrentMonth: boolean }> => {
+const getCalendarCells = (monthDate: Date, weekStartsOn: number): Array<{ date: Date; inCurrentMonth: boolean }> => {
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const firstDay = new Date(year, month, 1);
   const firstWeekday = firstDay.getDay();
+  const leadDays = (firstWeekday - weekStartsOn + 7) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const daysInPrevMonth = new Date(year, month, 0).getDate();
 
   const cells: Array<{ date: Date; inCurrentMonth: boolean }> = [];
   for (let index = 0; index < 42; index += 1) {
-    const dayOffset = index - firstWeekday + 1;
+    const dayOffset = index - leadDays + 1;
     if (dayOffset <= 0) {
       const day = daysInPrevMonth + dayOffset;
       cells.push({ date: new Date(year, month - 1, day), inCurrentMonth: false });
@@ -115,16 +109,17 @@ const getCalendarCells = (monthDate: Date): Array<{ date: Date; inCurrentMonth: 
   return cells;
 };
 
-const parse24hTime = (value: string): { hour12: string; minute: string; meridiem: 'AM' | 'PM' } => {
+const parse24hTime = (value: string): { hour24: string; hour12: string; minute: string; meridiem: 'AM' | 'PM' } => {
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
   if (!match) {
-    return { hour12: '12', minute: '00', meridiem: 'AM' };
+    return { hour24: '00', hour12: '12', minute: '00', meridiem: 'AM' };
   }
   const hour24 = Number(match[1]);
   const minute = match[2];
   const meridiem = hour24 >= 12 ? 'PM' : 'AM';
   const rawHour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
   return {
+    hour24: String(hour24).padStart(2, '0'),
     hour12: String(rawHour12).padStart(2, '0'),
     minute,
     meridiem,
@@ -192,9 +187,51 @@ const getArrowMinute = (value: string, step: number) => {
   return getValidNumber(String(Number.parseInt(value, 10) + step), { min: 0, max: 59, loop: true });
 };
 
+const getWeekStartsOn = (locale: string): number => {
+  try {
+    const localeApi = (Intl as unknown as {
+      Locale?: new (tag: string) => { weekInfo?: { firstDay?: number } };
+    }).Locale;
+    if (typeof localeApi !== 'function') {
+      return 1;
+    }
+    const weekInfo = new localeApi(locale).weekInfo;
+    const firstDayRaw = weekInfo?.firstDay;
+    if (typeof firstDayRaw !== 'number') {
+      return 1;
+    }
+    return firstDayRaw % 7;
+  } catch {
+    return 1;
+  }
+};
+
+const getUses24Hour = (locale: string): boolean => {
+  try {
+    const options = new Intl.DateTimeFormat(locale, { hour: 'numeric' }).resolvedOptions();
+    if (typeof options.hour12 === 'boolean') {
+      return !options.hour12;
+    }
+    return options.hourCycle === 'h23' || options.hourCycle === 'h24';
+  } catch {
+    return true;
+  }
+};
+
+const getLocalizedWeekdayLabels = (locale: string): string[] => {
+  const formatter = new Intl.DateTimeFormat(locale, { weekday: 'short' });
+  const sundayBase = new Date(2023, 0, 1);
+  return WEEKDAY_INDEXES.map((offset) => formatter.format(new Date(sundayBase.getFullYear(), sundayBase.getMonth(), sundayBase.getDate() + offset)));
+};
+
+const rotateWeekdays = <T,>(items: T[], weekStartsOn: number): T[] => {
+  return [...items.slice(weekStartsOn), ...items.slice(0, weekStartsOn)];
+};
+
 interface TimePillProps {
   value: string;
   onChange: (next: string) => void;
+  use24Hour: boolean;
 }
 
 const FieldLabel: React.FC<{
@@ -210,7 +247,7 @@ const FieldLabel: React.FC<{
   </div>
 );
 
-const TimePill: React.FC<TimePillProps> = ({ value, onChange }) => {
+const TimePill: React.FC<TimePillProps> = ({ value, onChange, use24Hour }) => {
   const parts = React.useMemo(() => parse24hTime(value), [value]);
   const hourRef = React.useRef<HTMLInputElement>(null);
   const minuteRef = React.useRef<HTMLInputElement>(null);
@@ -228,11 +265,29 @@ const TimePill: React.FC<TimePillProps> = ({ value, onChange }) => {
     setMinuteDraftState(next);
   }, []);
 
+  const getValid24Hour = (hour: string) => getValidNumber(hour, { min: 0, max: 23 });
+  const getArrow24Hour = (hour: string, step: number) => getValidNumber(String(Number.parseInt(hour, 10) + step), {
+    min: 0,
+    max: 23,
+    loop: true,
+  });
+  const to24hFrom24Hour = (hour24: string, minute: string) => {
+    const hourNumRaw = Number(hour24);
+    const minuteNumRaw = Number(minute);
+    const hourNum = Number.isFinite(hourNumRaw) ? Math.min(23, Math.max(0, hourNumRaw)) : 0;
+    const minuteNum = Number.isFinite(minuteNumRaw) ? Math.min(59, Math.max(0, minuteNumRaw)) : 0;
+    return `${String(hourNum).padStart(2, '0')}:${String(minuteNum).padStart(2, '0')}`;
+  };
+
   const onHourChange = (raw: string) => {
     const digits = raw.replace(/\D/g, '').slice(0, 2);
     setHourDraft(digits);
     if (digits.length === 2) {
-      onChange(to24hTime(getValid12Hour(digits), parts.minute, parts.meridiem));
+      if (use24Hour) {
+        onChange(to24hFrom24Hour(getValid24Hour(digits), parts.minute));
+      } else {
+        onChange(to24hTime(getValid12Hour(digits), parts.minute, parts.meridiem));
+      }
       setHourDraft(null);
       minuteRef.current?.focus();
     }
@@ -242,13 +297,19 @@ const TimePill: React.FC<TimePillProps> = ({ value, onChange }) => {
     if (digits === null) return;
     setHourDraft(null);
     if (digits.length === 0) return;
+    if (use24Hour) {
+      onChange(to24hFrom24Hour(getValid24Hour(digits.padStart(2, '0')), parts.minute));
+      return;
+    }
     onChange(to24hTime(getValid12Hour(digits.padStart(2, '0')), parts.minute, parts.meridiem));
   };
   const onMinuteChange = (raw: string) => {
     const digits = raw.replace(/\D/g, '').slice(0, 2);
     setMinuteDraft(digits);
     if (digits.length === 2) {
-      onChange(to24hTime(parts.hour12, getValidMinute(digits), parts.meridiem));
+      onChange(use24Hour
+        ? to24hFrom24Hour(parts.hour24, getValidMinute(digits))
+        : to24hTime(parts.hour12, getValidMinute(digits), parts.meridiem));
       setMinuteDraft(null);
     }
   };
@@ -257,12 +318,18 @@ const TimePill: React.FC<TimePillProps> = ({ value, onChange }) => {
     if (digits === null) return;
     setMinuteDraft(null);
     if (digits.length === 0) return;
-    onChange(to24hTime(parts.hour12, getValidMinute(digits.padStart(2, '0')), parts.meridiem));
+    onChange(use24Hour
+      ? to24hFrom24Hour(parts.hour24, getValidMinute(digits.padStart(2, '0')))
+      : to24hTime(parts.hour12, getValidMinute(digits.padStart(2, '0')), parts.meridiem));
   };
   const stepHour = (step: number) =>
-    onChange(to24hTime(getArrowHour(parts.hour12, step), parts.minute, parts.meridiem));
+    onChange(use24Hour
+      ? to24hFrom24Hour(getArrow24Hour(parts.hour24, step), parts.minute)
+      : to24hTime(getArrowHour(parts.hour12, step), parts.minute, parts.meridiem));
   const stepMinute = (step: number) =>
-    onChange(to24hTime(parts.hour12, getArrowMinute(parts.minute, step), parts.meridiem));
+    onChange(use24Hour
+      ? to24hFrom24Hour(parts.hour24, getArrowMinute(parts.minute, step))
+      : to24hTime(parts.hour12, getArrowMinute(parts.minute, step), parts.meridiem));
   const setPeriod = (next: 'AM' | 'PM') => {
     if (next !== parts.meridiem) {
       onChange(to24hTime(parts.hour12, parts.minute, next));
@@ -297,11 +364,16 @@ const TimePill: React.FC<TimePillProps> = ({ value, onChange }) => {
   };
 
   return (
-    <div className="inline-flex h-9 w-fit items-center gap-1 rounded-md border border-border bg-background pl-2 pr-1 focus-within:ring-1 focus-within:ring-interactive-focusRing focus-within:border-interactive-focusRing">
+    <div
+      className={cn(
+        'inline-flex h-9 w-fit items-center gap-1 rounded-md border border-border bg-background focus-within:ring-1 focus-within:ring-interactive-focusRing focus-within:border-interactive-focusRing',
+        use24Hour ? 'px-2' : 'pl-2 pr-1',
+      )}
+    >
       <input
         ref={hourRef}
         inputMode="numeric"
-        value={hourDraft ?? parts.hour12}
+        value={hourDraft ?? (use24Hour ? parts.hour24 : parts.hour12)}
         onChange={(event) => onHourChange(event.target.value)}
         onKeyDown={onHourKeyDown}
         onFocus={() => setHourDraft('')}
@@ -323,18 +395,20 @@ const TimePill: React.FC<TimePillProps> = ({ value, onChange }) => {
         aria-label="Minutes"
         className="h-7 w-7 shrink-0 rounded-sm bg-transparent text-center font-mono text-sm tabular-nums text-foreground outline-none caret-transparent focus:bg-interactive-hover"
       />
-      <Select value={parts.meridiem} onValueChange={(next) => setPeriod(next as 'AM' | 'PM')}>
-        <SelectTrigger
-          aria-label="Period"
-          className="ml-1 h-7 w-fit border-0 bg-transparent pl-2 pr-1 shadow-none hover:bg-interactive-hover focus:ring-0"
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="AM">AM</SelectItem>
-          <SelectItem value="PM">PM</SelectItem>
-        </SelectContent>
-      </Select>
+      {!use24Hour ? (
+        <Select value={parts.meridiem} onValueChange={(next) => setPeriod(next as 'AM' | 'PM')}>
+          <SelectTrigger
+            aria-label="Period"
+            className="ml-1 h-7 w-fit border-0 bg-transparent pl-2 pr-1 shadow-none hover:bg-interactive-hover focus:ring-0"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="AM">AM</SelectItem>
+            <SelectItem value="PM">PM</SelectItem>
+          </SelectContent>
+        </Select>
+      ) : null}
     </div>
   );
 };
@@ -506,6 +580,8 @@ export function ScheduledTaskEditorDialog(props: {
   const currentModelID = useConfigStore((state) => state.currentModelId);
   const currentVariant = useConfigStore((state) => state.currentVariant || '');
   const currentAgentName = useConfigStore((state) => state.currentAgentName || '');
+  const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
+  const weekStartPreference = useUIStore((state) => state.weekStartPreference);
 
   const [draft, setDraft] = React.useState<ScheduledTaskDraft>(() =>
     toDraft(task, {
@@ -522,6 +598,39 @@ export function ScheduledTaskEditorDialog(props: {
     return new Date(initialDate.getFullYear(), initialDate.getMonth(), 1);
   });
   const datePickerRef = React.useRef<HTMLDivElement>(null);
+  const locale = React.useMemo(() => {
+    if (typeof navigator !== 'undefined' && navigator.language) {
+      return navigator.language;
+    }
+    return Intl.DateTimeFormat().resolvedOptions().locale || 'en-US';
+  }, []);
+  const localeUse24Hour = React.useMemo(() => getUses24Hour(locale), [locale]);
+  const localeWeekStartsOn = React.useMemo(() => getWeekStartsOn(locale), [locale]);
+  const use24Hour = React.useMemo(() => {
+    if (timeFormatPreference === '24h') {
+      return true;
+    }
+    if (timeFormatPreference === '12h') {
+      return false;
+    }
+    return localeUse24Hour;
+  }, [timeFormatPreference, localeUse24Hour]);
+  const weekStartsOn = React.useMemo(() => {
+    if (weekStartPreference === 'sunday') {
+      return 0;
+    }
+    if (weekStartPreference === 'monday') {
+      return 1;
+    }
+    return localeWeekStartsOn;
+  }, [weekStartPreference, localeWeekStartsOn]);
+  const orderedWeekdays = React.useMemo(() => {
+    const labels = getLocalizedWeekdayLabels(locale);
+    return rotateWeekdays(
+      WEEKDAY_INDEXES.map((value) => ({ value, label: labels[value] || '' })),
+      weekStartsOn,
+    );
+  }, [locale, weekStartsOn]);
 
   React.useEffect(() => {
     if (!open) {
@@ -571,6 +680,29 @@ export function ScheduledTaskEditorDialog(props: {
     const model = provider?.models?.find((item) => item.id === draft.execution.modelID) as { variants?: Record<string, unknown> } | undefined;
     return model?.variants ? Object.keys(model.variants) : [];
   }, [providers, draft.execution.providerID, draft.execution.modelID]);
+  const hasVariantOptions = variantOptions.length > 0;
+  const selectedVariantValue = React.useMemo(() => {
+    if (!hasVariantOptions) {
+      return '__default';
+    }
+    if (!draft.execution.variant) {
+      return '__default';
+    }
+    return variantOptions.includes(draft.execution.variant) ? draft.execution.variant : '__default';
+  }, [draft.execution.variant, hasVariantOptions, variantOptions]);
+
+  React.useEffect(() => {
+    if (hasVariantOptions || !draft.execution.variant) {
+      return;
+    }
+    setDraft((prev) => ({
+      ...prev,
+      execution: {
+        ...prev.execution,
+        variant: '',
+      },
+    }));
+  }, [hasVariantOptions, draft.execution.variant]);
 
   const toggleWeekday = React.useCallback((weekday: number, nextChecked: boolean) => {
     setDraft((prev) => {
@@ -642,6 +774,10 @@ export function ScheduledTaskEditorDialog(props: {
   const isAtCurrentMonth = React.useMemo(
     () => startOfMonth(calendarMonth).getTime() <= currentMonthStart.getTime(),
     [calendarMonth, currentMonthStart],
+  );
+  const calendarWeekdayLabels = React.useMemo(
+    () => orderedWeekdays.map((weekday) => weekday.label),
+    [orderedWeekdays],
   );
 
   const setOneTimeDate = React.useCallback((isoDate: string) => {
@@ -832,15 +968,15 @@ export function ScheduledTaskEditorDialog(props: {
                       </div>
 
                       <div className="mb-1 grid grid-cols-7 gap-1 px-1">
-                        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((weekday) => (
-                          <div key={weekday} className="py-1 text-center typography-micro text-muted-foreground">
+                        {calendarWeekdayLabels.map((weekday, index) => (
+                          <div key={`${weekday}-${index}`} className="py-1 text-center typography-micro text-muted-foreground">
                             {weekday}
                           </div>
                         ))}
                       </div>
 
                       <div className="grid grid-cols-7 gap-1">
-                        {getCalendarCells(calendarMonth).map(({ date, inCurrentMonth }) => {
+                        {getCalendarCells(calendarMonth, weekStartsOn).map(({ date, inCurrentMonth }) => {
                           const isoDate = formatLocalDateISO(date);
                           const isSelected = isoDate === draft.schedule.onceDate;
                           const isToday = isSameCalendarDay(date, todayDate);
@@ -902,6 +1038,7 @@ export function ScheduledTaskEditorDialog(props: {
                 <FieldLabel>Time</FieldLabel>
                 <TimePill
                   value={draft.schedule.onceTime}
+                  use24Hour={use24Hour}
                   onChange={(next) => setDraft((prev) => ({
                     ...prev,
                     schedule: { ...prev.schedule, onceTime: next },
@@ -935,7 +1072,7 @@ export function ScheduledTaskEditorDialog(props: {
                 <div className="flex flex-col gap-1 sm:col-span-2">
                   <FieldLabel>Weekdays</FieldLabel>
                   <div className="flex flex-wrap gap-x-3 gap-y-2">
-                    {WEEKDAY_LABELS.map((weekday) => {
+                    {orderedWeekdays.map((weekday) => {
                       const checked = draft.schedule.weekdays.includes(weekday.value);
                       return (
                         <button
@@ -964,6 +1101,7 @@ export function ScheduledTaskEditorDialog(props: {
                     <div key={index} className="flex items-center gap-2">
                       <TimePill
                         value={time}
+                        use24Hour={use24Hour}
                         onChange={(next) => updateTimeAt(index, next)}
                       />
                       {draft.schedule.times.length > 1 ? (
@@ -1030,9 +1168,10 @@ export function ScheduledTaskEditorDialog(props: {
             </div>
 
             <div className="flex min-w-0 flex-col gap-1">
-              <FieldLabel>Default thinking</FieldLabel>
+              <FieldLabel>Thinking level</FieldLabel>
               <Select
-                value={draft.execution.variant || '__default'}
+                value={selectedVariantValue}
+                disabled={!hasVariantOptions}
                 onValueChange={(value) => {
                   setDraft((prev) => ({
                     ...prev,

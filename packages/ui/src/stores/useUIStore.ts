@@ -13,6 +13,8 @@ export type UserMessageRenderingMode = 'markdown' | 'plain';
 export type ChatRenderMode = 'sorted' | 'live';
 export type ActivityRenderMode = 'collapsed' | 'summary';
 export type SessionRetentionAction = 'archive' | 'delete';
+export type TimeFormatPreference = 'auto' | '12h' | '24h';
+export type WeekStartPreference = 'auto' | 'sunday' | 'monday';
 
 type ContextPanelTab = {
   id: string;
@@ -557,6 +559,8 @@ interface UIStore {
   showToolFileIcons: boolean;
   showExpandedBashTools: boolean;
   showExpandedEditTools: boolean;
+  timeFormatPreference: TimeFormatPreference;
+  weekStartPreference: WeekStartPreference;
   mermaidRenderingMode: MermaidRenderingMode;
   userMessageRenderingMode: UserMessageRenderingMode;
   stickyUserHeader: boolean;
@@ -669,6 +673,8 @@ interface UIStore {
   setShowToolFileIcons: (value: boolean) => void;
   setShowExpandedBashTools: (value: boolean) => void;
   setShowExpandedEditTools: (value: boolean) => void;
+  setTimeFormatPreference: (value: TimeFormatPreference) => void;
+  setWeekStartPreference: (value: WeekStartPreference) => void;
   setMermaidRenderingMode: (value: MermaidRenderingMode) => void;
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
   setStickyUserHeader: (value: boolean) => void;
@@ -786,6 +792,8 @@ export const useUIStore = create<UIStore>()(
         showToolFileIcons: true,
         showExpandedBashTools: false,
         showExpandedEditTools: false,
+        timeFormatPreference: 'auto',
+        weekStartPreference: 'auto',
         mermaidRenderingMode: 'svg',
         userMessageRenderingMode: 'markdown',
         stickyUserHeader: true,
@@ -1698,6 +1706,14 @@ export const useUIStore = create<UIStore>()(
         setShowExpandedEditTools: (value) => {
           set({ showExpandedEditTools: value });
         },
+
+        setTimeFormatPreference: (value) => {
+          set({ timeFormatPreference: value });
+        },
+
+        setWeekStartPreference: (value) => {
+          set({ weekStartPreference: value });
+        },
         setMermaidRenderingMode: (value) => {
           set({ mermaidRenderingMode: value });
         },
@@ -1897,6 +1913,8 @@ export const useUIStore = create<UIStore>()(
           showToolFileIcons: state.showToolFileIcons,
           showExpandedBashTools: state.showExpandedBashTools,
           showExpandedEditTools: state.showExpandedEditTools,
+          timeFormatPreference: state.timeFormatPreference,
+          weekStartPreference: state.weekStartPreference,
           mermaidRenderingMode: state.mermaidRenderingMode,
           userMessageRenderingMode: state.userMessageRenderingMode,
           stickyUserHeader: state.stickyUserHeader,
