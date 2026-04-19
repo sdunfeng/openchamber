@@ -1,7 +1,16 @@
 /**
- * Bundle main.mjs (+ ssh-manager.mjs) into a single file with all
- * npm dependencies inlined.  Electron built-ins and Node built-ins
- * stay external so they resolve at runtime inside the Electron app.
+ * Bundle main.mjs into a single file. Small electron-* helper deps are
+ * inlined; everything else — including the in-process web server
+ * (@openchamber/web) and native modules — stays external so it resolves
+ * from node_modules at runtime inside the packaged app.
+ *
+ * Why external matters: packages/web/server pulls in bun-pty, which has
+ * a top-level `import { dlopen } from "bun:ffi"`. If we inline it here,
+ * Node's ESM loader sees `bun:ffi` at package load time and crashes with
+ * ERR_UNSUPPORTED_ESM_URL_SCHEME before any runtime guard can skip it.
+ * Leaving @openchamber/web external means the conditional
+ * `if (isBunRuntime) await import('bun-pty')` stays dynamic and is never
+ * reached under Electron.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +23,14 @@ const result = await Bun.build({
   outdir: path.join(root, 'dist-bundle'),
   target: 'node',
   format: 'esm',
-  external: ['electron'],
+  external: [
+    'electron',
+    '@openchamber/web',
+    '@openchamber/web/*',
+    'bun-pty',
+    'node-pty',
+    'better-sqlite3',
+  ],
   minify: false,
   sourcemap: 'none',
   naming: '[name].mjs',
