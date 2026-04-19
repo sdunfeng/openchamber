@@ -4,16 +4,27 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import { Slot } from "@/components/ui/slot";
 
-// Matte solid: thin inner top highlight + hairline inner border + soft drop.
-// No full-surface gloss overlay — keeps the face flat, not pillowy.
+// Matte solid: thin inner top highlight + pill-style elevation (hairline
+// outer ring + stacked tight/soft drops with navy tint).
 const SOLID_SHADOW =
-  "shadow-[inset_0_1px_0_rgba(255,255,255,0.14),inset_0_0_0_1px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.18)]";
+  "shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_0_0_1px_rgba(14,18,27,0.12),0_1px_2px_rgba(14,18,27,0.12),0_2px_4px_-1px_rgba(14,18,27,0.08)]";
 
 const SOLID_SHADOW_HOVER =
-  "hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.18),inset_0_0_0_1px_rgba(0,0,0,0.08),0_2px_4px_rgba(0,0,0,0.22)]";
+  "hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_0_0_1px_rgba(14,18,27,0.14),0_2px_4px_rgba(14,18,27,0.14),0_4px_8px_-2px_rgba(14,18,27,0.10)]";
 
 const SOLID_SHADOW_ACTIVE =
-  "active:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(0,0,0,0.10),0_1px_1px_rgba(0,0,0,0.20)]";
+  "active:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_0_0_1px_rgba(14,18,27,0.14),0_1px_1px_rgba(14,18,27,0.14)]";
+
+// Outlined (basic) buttons: same pill elevation as solids but without the
+// inner highlight.
+const OUTLINE_SHADOW =
+  "shadow-[0_0_0_1px_rgba(14,18,27,0.12),0_1px_2px_rgba(14,18,27,0.12),0_2px_4px_-1px_rgba(14,18,27,0.08)]";
+
+const OUTLINE_SHADOW_HOVER =
+  "hover:shadow-[0_0_0_1px_rgba(14,18,27,0.14),0_2px_4px_rgba(14,18,27,0.14),0_4px_8px_-2px_rgba(14,18,27,0.10)]";
+
+const OUTLINE_SHADOW_ACTIVE =
+  "active:shadow-[0_0_0_1px_rgba(14,18,27,0.14),0_1px_1px_rgba(14,18,27,0.14)]";
 
 const fancyButtonRoot = cva(
   [
@@ -45,8 +56,11 @@ const fancyButtonRoot = cva(
           SOLID_SHADOW_ACTIVE,
         ],
         basic: [
-          "bg-background text-foreground border border-border/60",
-          "hover:bg-interactive-hover hover:text-foreground hover:shadow-none",
+          "bg-background text-foreground",
+          "hover:bg-interactive-hover hover:text-foreground",
+          OUTLINE_SHADOW,
+          OUTLINE_SHADOW_HOVER,
+          OUTLINE_SHADOW_ACTIVE,
         ],
       },
       size: {
