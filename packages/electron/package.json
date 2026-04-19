@@ -30,7 +30,7 @@
     "lint": "node -e \"process.exit(0)\""
   },
   "build": {
-    "appId": "ai.opencode.openchamber.electron",
+    "appId": "dev.openchamber.desktop",
     "productName": "OpenChamber",
     "files": [
       "dist-bundle/main.mjs",

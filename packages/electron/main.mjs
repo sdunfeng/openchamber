@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === '1' || !app.isPackaged;
 
 const DEEP_LINK_PROTOCOL = 'openchamber';
-const APP_USER_MODEL_ID = 'ai.opencode.openchamber.electron';
+const APP_USER_MODEL_ID = 'dev.openchamber.desktop';
 
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
