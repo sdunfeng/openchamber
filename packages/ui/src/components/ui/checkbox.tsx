@@ -25,7 +25,7 @@ export const Checkbox = React.memo<CheckboxProps>(function Checkbox({
   className,
   iconClassName,
 }) {
-  const boxSize = 'h-3.5 w-3.5 min-h-3.5 min-w-3.5';
+  const boxSize = 'h-[14px] w-[14px] min-h-[14px] min-w-[14px]';
   const iconSize = 'h-[10px] w-[10px] min-h-[10px] min-w-[10px]';
   const isOn = checked || indeterminate;
   return (

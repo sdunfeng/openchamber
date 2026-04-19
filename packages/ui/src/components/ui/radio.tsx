@@ -51,7 +51,7 @@ export const Radio = React.memo<RadioProps>(function Radio({
       aria-checked={checked}
       aria-label={ariaLabel}
       className={cn(
-        'group/radio relative flex h-3.5 w-3.5 min-h-3.5 min-w-3.5 shrink-0 self-center items-center justify-center rounded-full outline-none',
+        'group/radio relative flex h-[14px] w-[14px] min-h-[14px] min-w-[14px] shrink-0 self-center items-center justify-center rounded-full outline-none',
         'transition-[background-color,box-shadow] duration-200 ease-out',
         // fill driven from props so first paint is correct
         checked
