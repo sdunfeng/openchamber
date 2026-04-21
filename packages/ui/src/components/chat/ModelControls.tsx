@@ -319,8 +319,9 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const primaryAgents = React.useMemo(() => agents.filter((agent) => agent.mode === 'primary'), [agents]);
 
     const currentSessionId = usePaneSessionId();
+    const paneContext = usePaneContext();
     // When rendered outside a pane (e.g. legacy call sites), treat as focused.
-    const isPaneFocused = usePaneContext()?.isFocused ?? true;
+    const isPaneFocused = paneContext?.isFocused ?? true;
     const getDirectoryForSession = useSessionUIStore((s) => s.getDirectoryForSession);
     const sync = useSync();
 
@@ -399,9 +400,33 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         }
         return initial;
     });
-    // Use global state for model selector (allows Ctrl+M shortcut)
-    const agentMenuOpen = isModelSelectorOpen;
-    const setAgentMenuOpen = setModelSelectorOpen;
+    // Per-pane model selector open state. Global useUIStore.isModelSelectorOpen is
+    // still the source of truth for the Ctrl+M shortcut — we mirror it into local
+    // state only for the focused pane so that opening in one pane doesn't open
+    // both. When a non-focused pane is clicked, PaneRoot's mousedown capture
+    // switches focus synchronously before the dropdown's click handler runs, so
+    // by then the pane is focused and global sync applies.
+    const [localModelSelectorOpen, setLocalModelSelectorOpen] = React.useState(false);
+    React.useEffect(() => {
+        if (!isPaneFocused) return;
+        setLocalModelSelectorOpen(isModelSelectorOpen);
+    }, [isModelSelectorOpen, isPaneFocused]);
+    // Non-focused pane's dropdown must close whenever focus leaves it.
+    React.useEffect(() => {
+        if (isPaneFocused) return;
+        if (localModelSelectorOpen) setLocalModelSelectorOpen(false);
+    }, [isPaneFocused, localModelSelectorOpen]);
+    const agentMenuOpen = localModelSelectorOpen;
+    const setAgentMenuOpen = React.useCallback((open: boolean) => {
+        setLocalModelSelectorOpen(open);
+        // Only the focused pane writes back to global so non-focused interaction
+        // (which should have already focused the pane by now) doesn't force-open
+        // the other pane.
+        const focusedNow = useSessionUIStore.getState().focusedPane;
+        const myPane = paneContext?.pane;
+        const amFocused = myPane ? focusedNow === myPane : true;
+        if (amFocused) setModelSelectorOpen(open);
+    }, [paneContext?.pane, setModelSelectorOpen]);
     const openAddProviderSettings = React.useCallback(() => {
         setSelectedProvider(ADD_PROVIDER_ID);
         setSettingsPage('providers');
@@ -414,6 +439,18 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const modelItemRefs = React.useRef<(HTMLDivElement | null)[]>([]);
     const [pendingThinkingVariants, setPendingThinkingVariants] = React.useState<Map<string, string | undefined>>(new Map());
     const [adjustedThinkingModels, setAdjustedThinkingModels] = React.useState<Set<string>>(new Set());
+
+    // Focus the chat input textarea belonging to THIS pane — plain
+    // `document.querySelector('textarea[data-chat-input]')` returns the first match,
+    // which in split view is always the left pane's textarea.
+    const focusOwnChatInput = React.useCallback(() => {
+        const paneSide = paneContext?.pane;
+        const selector = paneSide
+            ? `[data-pane="${paneSide}"] textarea[data-chat-input="true"]`
+            : 'textarea[data-chat-input="true"]';
+        const textarea = document.querySelector<HTMLTextAreaElement>(selector);
+        textarea?.focus();
+    }, [paneContext?.pane]);
 
     React.useEffect(() => {
         if (activeMobilePanel === 'model') {
@@ -433,13 +470,16 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         }
     }, [activeMobilePanel]);
 
-    // Handle model selector close behavior (separate from agent selector)
-    const prevModelSelectorOpenRef = React.useRef(isModelSelectorOpen);
+    // Handle model selector close behavior (separate from agent selector).
+    // Watches the PANE-LOCAL open state — the effect must not fire in the
+    // other pane when it closes, or both panes would race to refocus (the
+    // last-rendered pane would win because React runs effects in tree order).
+    const prevModelSelectorOpenRef = React.useRef(localModelSelectorOpen);
     React.useEffect(() => {
         const wasOpen = prevModelSelectorOpenRef.current;
-        prevModelSelectorOpenRef.current = isModelSelectorOpen;
+        prevModelSelectorOpenRef.current = localModelSelectorOpen;
 
-        if (!isModelSelectorOpen) {
+        if (!localModelSelectorOpen) {
             setDesktopModelQuery('');
             setModelSelectedIndex(0);
             setPendingThinkingVariants(new Map());
@@ -447,13 +487,10 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
 
             // Restore focus to chat input when model selector closes
             if (wasOpen && !isCompact) {
-                requestAnimationFrame(() => {
-                    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
-                    textarea?.focus();
-                });
+                requestAnimationFrame(focusOwnChatInput);
             }
         }
-    }, [isModelSelectorOpen, isCompact]);
+    }, [localModelSelectorOpen, isCompact, focusOwnChatInput]);
 
     // Handle agent selector close behavior
     const [agentSearchQuery, setAgentSearchQuery] = React.useState('');
@@ -461,13 +498,10 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         if (!isAgentSelectorOpen) {
             setAgentSearchQuery('');
             if (!isCompact) {
-                requestAnimationFrame(() => {
-                    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
-                    textarea?.focus();
-                });
+                requestAnimationFrame(focusOwnChatInput);
             }
         }
-    }, [isAgentSelectorOpen, isCompact]);
+    }, [isAgentSelectorOpen, isCompact, focusOwnChatInput]);
 
     // Reset selected index when search query changes
     React.useEffect(() => {
@@ -1073,10 +1107,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             }
             if (!isCompact || !onMobilePanelSelection) {
                 // Restore focus to chat input after model selection
-                requestAnimationFrame(() => {
-                    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
-                    textarea?.focus();
-                });
+                requestAnimationFrame(focusOwnChatInput);
             }
         } catch (error) {
             console.error('[ModelControls] Handle model change error:', error);
@@ -1707,10 +1738,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                 });
                 return;
             }
-            requestAnimationFrame(() => {
-                const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
-                textarea?.focus();
-            });
+            requestAnimationFrame(focusOwnChatInput);
         };
 
         return (

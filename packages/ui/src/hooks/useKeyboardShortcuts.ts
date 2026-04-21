@@ -139,7 +139,13 @@ export const useKeyboardShortcuts = () => {
 
       if (eventMatchesShortcut(e, combo('focus_input'))) {
         e.preventDefault();
-        const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
+        // Route global focus shortcut to the focused pane's textarea — a raw
+        // `querySelector` returns the first match, which is always the left pane.
+        const focusedPane = useSessionUIStore.getState().focusedPane;
+        const scoped = document.querySelector<HTMLTextAreaElement>(
+          `[data-pane="${focusedPane}"] textarea[data-chat-input="true"]`,
+        );
+        const textarea = scoped ?? document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
         textarea?.focus();
         return;
       }

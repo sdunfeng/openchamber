@@ -17,15 +17,22 @@ type Props = {
 export const PaneRoot: React.FC<Props> = ({ pane, sessionId, isFocused, showHeader, showClose }) => {
   const setFocusedPane = useSessionUIStore((s) => s.setFocusedPane);
 
-  const handleFocusOnInteraction = React.useCallback(() => {
-    if (!isFocused) setFocusedPane(pane);
-  }, [isFocused, pane, setFocusedPane]);
+  // Focus follows explicit pointer gestures only. Focus events (onFocusCapture)
+  // fire for programmatic focus() too — Radix restoring focus after a dropdown
+  // closes, initial mount auto-focus, etc. — and those would flip the focused
+  // pane back to whichever renders first in the DOM (left).
+  const handlePointerInteraction = React.useCallback(
+    (event: React.PointerEvent | React.MouseEvent) => {
+      if (event.button !== undefined && event.button !== 0 && event.button !== 2) return;
+      if (!isFocused) setFocusedPane(pane);
+    },
+    [isFocused, pane, setFocusedPane],
+  );
 
   return (
     <PaneProvider value={{ pane, sessionId, isFocused }}>
       <div
-        onMouseDownCapture={handleFocusOnInteraction}
-        onFocusCapture={handleFocusOnInteraction}
+        onPointerDownCapture={handlePointerInteraction}
         className={cn(
           'relative flex h-full min-w-0 flex-1 flex-col overflow-hidden',
           !isFocused && 'opacity-[0.97]',
